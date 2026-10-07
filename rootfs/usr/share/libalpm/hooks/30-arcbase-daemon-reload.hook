@@ -1,0 +1,15 @@
+# Arcbase Desktop — hook ALPM
+# (equivalente agli hook del pacchetto systemd di Arch, che qui è fornito dal base LFS)
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/lib/systemd/system/*
+Target = usr/lib/systemd/user/*
+Target = etc/systemd/system/*
+
+[Action]
+Description = Ricaricamento della configurazione di systemd...
+When = PostTransaction
+Exec = /usr/share/libalpm/scripts/arcbase-systemd-hook daemon-reload

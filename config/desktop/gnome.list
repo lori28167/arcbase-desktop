@@ -1,0 +1,14 @@
+# GNOME — pacchetti dai repository Arch
+# display-manager: gdm
+gnome-shell
+gnome-control-center
+gnome-terminal
+gnome-tweaks
+gnome-keyring
+gnome-backgrounds
+nautilus
+gnome-text-editor
+gnome-system-monitor
+xdg-desktop-portal-gnome
+gdm
+xorg-xwayland

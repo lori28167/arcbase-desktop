@@ -1,0 +1,13 @@
+# Arcbase Desktop — hook ALPM
+# (equivalente agli hook del pacchetto systemd di Arch, che qui è fornito dal base LFS)
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/lib/udev/rules.d/*
+
+[Action]
+Description = Ricaricamento delle regole udev...
+When = PostTransaction
+Exec = /usr/share/libalpm/scripts/arcbase-systemd-hook udev-reload

@@ -1,0 +1,6 @@
+# Configurazione locale (sovrascrive config/arcbase.conf)
+config/local.conf
+# Immagini generate
+out/
+*.img
+*.qcow2

@@ -1,0 +1,10 @@
+# Xfce (X11) — pacchetti dai repository Arch
+# display-manager: lightdm
+xfce4
+xfce4-goodies
+xorg-server
+xorg-xinit
+lightdm
+lightdm-gtk-greeter
+network-manager-applet
+pavucontrol

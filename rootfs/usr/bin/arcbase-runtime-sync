@@ -1,0 +1,82 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-runtime-sync — allinea le librerie runtime ABI-critiche ad Arch
+#
+#  I binari dei repository Arch sono compilati contro le ultime glibc e
+#  libstdc++. Se il sistema base LFS è più vecchio, alcuni programmi non
+#  partirebbero ("version GLIBC_2.xx not found"). Per i pacchetti elencati in
+#  ARC_RUNTIME_SYNC_PKGS (default: glibc gcc-libs) questo strumento confronta
+#  la versione LFS con quella del repository e, se Arch è più recente,
+#  "adotta" il pacchetto Arch: lo toglie dai provides di arcbase-base e lo
+#  installa sovrascrivendo i file compilati da sorgente.
+#
+#  Uso: arcbase-runtime-sync [--check] [--noconfirm]
+#    --check   stampa solo i pacchetti che verrebbero adottati
+# =============================================================================
+set -o nounset -o pipefail
+
+ARC_CONF=${ARC_CONF:-/etc/arcbase/arc.conf}
+# shellcheck source=/dev/null
+[[ -r $ARC_CONF ]] && . "$ARC_CONF"
+: "${ARC_RUNTIME_SYNC_PKGS:=glibc gcc-libs libgcc libstdc++}"
+LIST=${ARC_BASE_PROVIDES:-/usr/share/arcbase/base-provides.list}
+ADOPTED=${ARC_ADOPTED:-/var/lib/arcbase/adopted.list}
+PACMAN=${ARC_PACMAN:-pacman}
+
+check=0
+opts=()
+for a; do
+    case $a in
+        --check) check=1 ;;
+        --noconfirm) opts+=(--noconfirm) ;;
+        *) echo "uso: $0 [--check] [--noconfirm]" >&2; exit 2 ;;
+    esac
+done
+
+base_version() { sed -n "s/^$1=//p" "$LIST" | head -n1; }
+
+# Versione nel repository senza epoch e pkgrel (es. 1:2.42+r3-1 -> 2.42+r3)
+repo_version() {
+    local v
+    v=$(LC_ALL=C "$PACMAN" -Si -- "$1" 2>/dev/null | awk -F': *' '/^Version/ { print $2; exit }') || return 1
+    [[ -n $v ]] || return 1
+    v=${v#*:}
+    printf '%s\n' "${v%-*}"
+}
+
+adopt=()
+for p in $ARC_RUNTIME_SYNC_PKGS; do
+    if [[ -r $ADOPTED ]] && grep -qxF -- "$p" "$ADOPTED"; then continue; fi
+    bv=$(base_version "$p")
+    [[ -n $bv ]] || continue
+    rv=$(repo_version "$p") || continue
+    if (( $(vercmp "$rv" "$bv") > 0 )); then
+        adopt+=("$p")
+        [[ $check == 1 ]] || echo "==> $p: LFS $bv < Arch $rv, adotto il pacchetto Arch"
+    fi
+done
+
+if (( check )); then
+    printf '%s\n' "${adopt[@]+"${adopt[@]}"}" | sed '/^$/d' | paste -sd' ' -
+    exit 0
+fi
+(( ${#adopt[@]} )) || { echo "==> librerie runtime già allineate"; exit 0; }
+[[ $EUID -eq 0 ]] || { echo "arcbase-runtime-sync: serve root" >&2; exit 1; }
+
+mkdir -p "${ADOPTED%/*}"
+printf '%s\n' "${adopt[@]}" >> "$ADOPTED"
+sort -u -o "$ADOPTED" "$ADOPTED"
+
+# 1) arcbase-base senza i provides adottati (le dipendenze inverse saranno
+#    di nuovo soddisfatte al passo 2)
+arcbase-mkbase --nodeps || exit 1
+# 2) installazione dei pacchetti Arch sopra i file LFS
+"$PACMAN" -S "${opts[@]+"${opts[@]}"}" --overwrite '*' --asdeps -- "${adopt[@]}" || exit 1
+"$PACMAN" -D --asexplicit -- "${adopt[@]}" >/dev/null
+# Le locale generate con localedef restano valide; le rigeneriamo per sicurezza
+if [[ " ${adopt[*]} " == *" glibc "* && -r /etc/locale.conf ]]; then
+    # shellcheck source=/dev/null
+    . /etc/locale.conf
+    [[ -n ${LANG:-} ]] && localedef -i "${LANG%%.*}" -f UTF-8 "$LANG" 2>/dev/null || :
+fi
+echo "==> adottati da Arch: ${adopt[*]}"

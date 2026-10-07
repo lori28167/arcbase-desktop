@@ -1,0 +1,124 @@
+# =============================================================================
+#  Mappa "nome pacchetto Arch" -> "sorgente in packages.conf"
+#
+#  Il sistema base compilato da sorgente (LFS) non contiene file tracciati da
+#  pacman. Per far sì che i pacchetti dei repository Arch trovino soddisfatte
+#  le loro dipendenze, il base viene registrato come pacchetto virtuale
+#  "arcbase-base" che dichiara  provides=(<nome-arch>=<versione>)  per ogni
+#  riga di questo file, più tutte le soname (libfoo.so=N-64) delle librerie
+#  presenti in /usr/lib (vedi 10-package-managers.sh).
+#
+#  Seconda colonna: nome in packages.conf, oppure @ARCBASE@ per usare la
+#  versione della distribuzione.
+# =============================================================================
+filesystem              @ARCBASE@
+iana-etc                iana-etc
+linux-api-headers       linux
+man-pages               man-pages
+glibc                   glibc
+tzdata                  tzdata
+zlib                    zlib
+bzip2                   bzip2
+xz                      xz
+lz4                     lz4
+zstd                    zstd
+file                    file
+readline                readline
+m4                      m4
+bc                      bc
+flex                    flex
+tcl                     tcl
+expect                  expect
+dejagnu                 dejagnu
+pkgconf                 pkgconf
+pkg-config              pkgconf
+binutils                binutils
+gmp                     gmp
+mpfr                    mpfr
+libmpc                  mpc
+attr                    attr
+acl                     acl
+libcap                  libcap
+libxcrypt               libxcrypt
+pam                     linux-pam
+pambase                 @ARCBASE@
+shadow                  shadow
+gcc                     gcc
+gcc-libs                gcc
+libgcc                  gcc
+libstdc++               gcc
+ncurses                 ncurses
+sed                     sed
+psmisc                  psmisc
+gettext                 gettext
+bison                   bison
+grep                    grep
+bash                    bash
+sh                      bash
+libtool                 libtool
+gdbm                    gdbm
+gperf                   gperf
+expat                   expat
+inetutils               inetutils
+less                    less
+perl                    perl
+perl-xml-parser         xml-parser
+intltool                intltool
+autoconf                autoconf
+automake                automake
+openssl                 openssl
+libelf                  elfutils
+libffi                  libffi
+python                  python
+python-flit-core        flit-core
+python-wheel            wheel
+python-setuptools       setuptools
+ninja                   ninja
+meson                   meson
+kmod                    kmod
+coreutils               coreutils
+check                   check
+diffutils               diffutils
+gawk                    gawk
+awk                     gawk
+findutils               findutils
+groff                   groff
+grub                    grub
+gzip                    gzip
+iproute2                iproute2
+kbd                     kbd
+libpipeline             libpipeline
+make                    make
+patch                   patch
+tar                     tar
+texinfo                 texinfo
+vim                     vim
+vim-runtime             vim
+vi                      vim
+python-markupsafe       markupsafe
+python-jinja            jinja2
+systemd                 systemd
+systemd-libs            systemd
+systemd-sysvcompat      systemd
+dbus                    dbus
+libdbus                 dbus
+man-db                  man-db
+procps-ng               procps-ng
+util-linux              util-linux
+util-linux-libs         util-linux
+e2fsprogs               e2fsprogs
+libgpg-error            libgpg-error
+libgcrypt               libgcrypt
+libassuan               libassuan
+libksba                 libksba
+npth                    npth
+gnupg                   gnupg
+gpgme                   gpgme
+libarchive              libarchive
+curl                    curl
+wget                    wget
+fakeroot                fakeroot
+pacman                  pacman
+bubblewrap              bubblewrap
+debootstrap             debootstrap
+debian-archive-keyring  debian-archive-keyring

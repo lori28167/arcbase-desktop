@@ -1,0 +1,12 @@
+# Arcbase Desktop — hook ALPM
+# (equivalente agli hook del pacchetto systemd di Arch, che qui è fornito dal base LFS)
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = usr/lib/tmpfiles.d/*.conf
+
+[Action]
+Description = Creazione dei file temporanei...
+When = PostTransaction
+Exec = /usr/share/libalpm/scripts/arcbase-systemd-hook tmpfiles

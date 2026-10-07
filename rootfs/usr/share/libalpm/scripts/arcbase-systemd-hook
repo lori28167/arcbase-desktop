@@ -1,0 +1,14 @@
+#!/bin/sh
+# Arcbase Desktop — azioni systemd per gli hook ALPM.
+# Le operazioni che parlano con il PID 1 vengono saltate se systemd non è in
+# esecuzione (build nel chroot, installazione offline).
+running() { [ -d /run/systemd/system ]; }
+
+case $1 in
+    tmpfiles)      /usr/bin/systemd-tmpfiles --create ;;
+    daemon-reload) running && /usr/bin/systemctl daemon-reload ;;
+    udev-reload)   running && /usr/bin/udevadm control --reload ;;
+    sysctl)        running && /usr/lib/systemd/systemd-sysctl ;;
+    *) echo "arcbase-systemd-hook: azione sconosciuta '$1'" >&2; exit 1 ;;
+esac
+exit 0

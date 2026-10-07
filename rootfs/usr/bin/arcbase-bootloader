@@ -1,0 +1,95 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-bootloader — installa GRUB (BIOS + UEFI) e genera fstab/grub.cfg
+#
+#  Uso (dentro il sistema Arcbase o in un chroot con /dev montato):
+#    arcbase-bootloader --disk /dev/sdX --root /dev/sdX3 [--esp /dev/sdX2]
+#                       [--removable] [--no-bios] [--cmdline "quiet ..."]
+#
+#  Arcbase non usa initramfs: il kernel monta / tramite root=PARTUUID=...
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+disk='' root='' esp='' removable=0 bios=1 cmdline='quiet'
+while (( $# )); do
+    case $1 in
+        --disk) disk=$2; shift ;;
+        --root) root=$2; shift ;;
+        --esp)  esp=$2; shift ;;
+        --removable) removable=1 ;;
+        --no-bios) bios=0 ;;
+        --cmdline) cmdline=$2; shift ;;
+        *) echo "opzione sconosciuta: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+[[ -b $disk && -b $root ]] || { echo "uso: $0 --disk <disco> --root <partizione> [--esp <partizione>]" >&2; exit 2; }
+
+uuid()     { blkid -s UUID     -o value "$1"; }
+partuuid() { blkid -s PARTUUID -o value "$1"; }
+fstype()   { blkid -s TYPE     -o value "$1"; }
+
+ROOT_UUID=$(uuid "$root")
+ROOT_PARTUUID=$(partuuid "$root")
+ROOT_FS=$(fstype "$root")
+[[ -n $ROOT_UUID && -n $ROOT_PARTUUID ]] || { echo "impossibile leggere UUID/PARTUUID di $root" >&2; exit 1; }
+
+kernel=$(find /boot -maxdepth 1 -name 'vmlinuz-*' -printf '%f\n' | sort -V | tail -n1)
+[[ -n $kernel ]] || { echo "nessun kernel in /boot" >&2; exit 1; }
+
+echo "==> /etc/fstab"
+{
+    echo "# Arcbase Desktop — /etc/fstab (generato da arcbase-bootloader)"
+    echo "# <file system>                           <mount>    <tipo>  <opzioni>        <dump> <fsck>"
+    printf 'UUID=%-40s /          %-7s defaults         1      1\n' "$ROOT_UUID" "$ROOT_FS"
+    if [[ -n $esp ]]; then
+        printf 'UUID=%-40s /boot/efi  vfat    umask=0077       0      2\n' "$(uuid "$esp")"
+    fi
+} > /etc/fstab
+
+if [[ -n $esp ]]; then
+    mkdir -p /boot/efi
+    mountpoint -q /boot/efi || mount "$esp" /boot/efi
+    echo "==> GRUB UEFI (x86_64-efi)"
+    if (( removable )); then
+        grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram
+    else
+        grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=arcbase
+    fi
+fi
+if (( bios )); then
+    echo "==> GRUB BIOS (i386-pc) su $disk"
+    grub-install --target=i386-pc "$disk" || echo "GRUB BIOS non installato (manca la partizione BIOS boot?)" >&2
+fi
+
+echo "==> /boot/grub/grub.cfg"
+mkdir -p /boot/grub
+cat > /boot/grub/grub.cfg <<EOF
+# Arcbase Desktop — generato da arcbase-bootloader
+set default=0
+set timeout=5
+
+insmod part_gpt
+insmod ext2
+insmod all_video
+insmod gfxterm
+set gfxmode=auto
+terminal_output gfxterm
+
+search --no-floppy --fs-uuid --set=root $ROOT_UUID
+
+menuentry "Arcbase Desktop" {
+    linux /boot/$kernel root=PARTUUID=$ROOT_PARTUUID ro rootwait $cmdline
+}
+
+menuentry "Arcbase Desktop (modalità testo, ripristino)" {
+    linux /boot/$kernel root=PARTUUID=$ROOT_PARTUUID ro rootwait systemd.unit=multi-user.target
+}
+
+if [ "\$grub_platform" = "efi" ]; then
+    menuentry "Impostazioni firmware UEFI" {
+        fwsetup
+    }
+fi
+EOF
+echo "==> bootloader installato (kernel: $kernel)"

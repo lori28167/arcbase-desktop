@@ -1,0 +1,557 @@
+#!/bin/bash
+# =============================================================================
+#  arc — gestore di pacchetti unificato di Arcbase Desktop
+#
+#  Arcbase combina due mondi:
+#    * pacman  gestisce il sistema host: il base compilato da sorgente (LFS),
+#              registrato come pacchetto virtuale "arcbase-base", più tutto ciò
+#              che si installa dai repository di Arch Linux;
+#    * apt     gestisce il "layer Debian", un root Debian isolato eseguito con
+#              bubblewrap, le cui applicazioni vengono esportate sull'host.
+#  arc sceglie automaticamente il backend giusto, oppure lo si forza con
+#  --arch / --deb. Invocato come apt, apt-get, apt-cache, apt-mark, dpkg o
+#  dpkg-query (link simbolici in /usr/bin) inoltra il comando al layer Debian.
+# =============================================================================
+set -o nounset -o pipefail
+
+ARC_VERSION=1.0.0
+ARC_CONF=${ARC_CONF:-/etc/arcbase/arc.conf}
+ARC_LIBDIR=${ARC_LIBDIR:-/usr/lib/arcbase}
+ARC_ARGV=("$@")
+
+if [[ -r $ARC_CONF ]]; then
+    # shellcheck source=/dev/null
+    . "$ARC_CONF"
+fi
+: "${ARC_PREFER:=arch}"
+: "${ARC_STATEDIR:=/var/lib/arcbase}"
+: "${ARC_DEBIAN_ROOT:=$ARC_STATEDIR/debian}"
+: "${ARC_DEBIAN_SUITE:=trixie}"
+: "${ARC_DEBIAN_MIRROR:=http://deb.debian.org/debian}"
+: "${ARC_DEBIAN_SECURITY_MIRROR:=http://security.debian.org/debian-security}"
+: "${ARC_DEBIAN_COMPONENTS:=main contrib non-free non-free-firmware}"
+: "${ARC_DEBIAN_KEYRING:=/usr/share/keyrings/debian-archive-keyring.gpg}"
+: "${ARC_DEBIAN_INCLUDE:=ca-certificates,locales,fontconfig,debian-archive-keyring}"
+: "${ARC_AUTO_EXPORT:=yes}"
+: "${ARC_EXPORT_PREFIX:=/usr/local}"
+: "${ARC_RUNTIME_SYNC:=auto}"
+: "${ARC_LOCALE:=}"
+PACMAN=${ARC_PACMAN:-pacman}
+BWRAP=${ARC_BWRAP:-bwrap}
+
+# --- Output -------------------------------------------------------------------
+if [[ -t 1 ]]; then
+    C_B=$'\e[1m' C_G=$'\e[32m' C_Y=$'\e[33m' C_R=$'\e[31m' C_C=$'\e[36m' C_M=$'\e[35m' C_0=$'\e[0m'
+else
+    C_B='' C_G='' C_Y='' C_R='' C_C='' C_M='' C_0=''
+fi
+msg()  { printf '%s==>%s %s%s%s\n' "$C_G" "$C_0" "$C_B" "$*" "$C_0"; }
+info() { printf '  %s->%s %s\n' "$C_C" "$C_0" "$*"; }
+warn() { printf '%s==> ATTENZIONE:%s %s\n' "$C_Y" "$C_0" "$*" >&2; }
+die()  { printf '%s==> ERRORE:%s %s\n' "$C_R" "$C_0" "$*" >&2; exit 1; }
+tag_arch() { printf '%s[arch]%s  ' "$C_C" "$C_0"; }
+tag_deb()  { printf '%s[debian]%s' "$C_M" "$C_0"; }
+
+# shellcheck source=../lib/arcbase/debian-layer.sh
+. "$ARC_LIBDIR/debian-layer.sh"
+# shellcheck source=../lib/arcbase/export.sh
+. "$ARC_LIBDIR/export.sh"
+
+is_root() { [[ $EUID -eq 0 || ${ARC_ASSUME_ROOT:-0} == 1 ]]; }
+
+require_root() {
+    is_root && return 0
+    if command -v sudo >/dev/null 2>&1; then
+        exec sudo -- "$0" "${ARC_ARGV[@]}"
+    fi
+    die "questa operazione richiede i privilegi di root"
+}
+
+# --- Risoluzione del backend ----------------------------------------------------
+
+arch_available() {
+    $PACMAN -Si -- "$1" >/dev/null 2>&1 || $PACMAN -Sg -- "$1" >/dev/null 2>&1
+}
+deb_available() {
+    deb_ready || return 1
+    deb_exec apt-cache show --no-all-versions "$1" >/dev/null 2>&1
+}
+
+# Stampa arch | debian | debfile | archfile | none
+resolve_backend() {
+    local t=$1
+    case $t in
+        *.deb)       [[ -f $t ]] && { echo debfile;  return; } ;;
+        *.pkg.tar*)  [[ -f $t ]] && { echo archfile; return; } ;;
+    esac
+    if [[ $ARC_PREFER == debian ]]; then
+        if deb_available "$t"; then echo debian; return; fi
+        if arch_available "$t"; then echo arch; return; fi
+    else
+        if arch_available "$t"; then echo arch; return; fi
+        if deb_available "$t"; then echo debian; return; fi
+    fi
+    echo none
+}
+
+# Copia un .deb locale nel layer e restituisce il percorso visto dal layer
+stage_deb_file() {
+    local src=$1 dir=/var/cache/arcbase-local
+    mkdir -p "$ARC_DEBIAN_ROOT$dir"
+    cp -f -- "$src" "$ARC_DEBIAN_ROOT$dir/${src##*/}"
+    printf '%s/%s\n' "$dir" "${src##*/}"
+}
+
+# Vero se il pacchetto è fornito dal base LFS (arcbase-base) e non da un pacchetto reale
+provided_by_base() {
+    ! $PACMAN -Qq -- "$1" >/dev/null 2>&1 && $PACMAN -T -- "$1" >/dev/null 2>&1
+}
+
+after_debian_change() {
+    if [[ $ARC_AUTO_EXPORT == yes ]]; then export_sync; fi
+}
+
+# --- Comandi ------------------------------------------------------------------------
+
+cmd_install() {
+    local force='' yes=0 t b rc=0
+    local -a arch=() archfiles=() deb=() missing=() pac_opts=() apt_opts=()
+    while (( $# )); do
+        case $1 in
+            -a|--arch) force=arch ;;
+            -d|--deb|--debian) force=debian ;;
+            -y|--yes|--noconfirm) yes=1 ;;
+            --) shift; break ;;
+            -*) die "opzione sconosciuta: $1" ;;
+            *) break ;;
+        esac
+        shift
+    done
+    (( $# )) || die "uso: arc install [--arch|--deb] [-y] <pacchetto>..."
+    require_root
+
+    for t; do
+        case $t in
+            *.deb)      if [[ -f $t ]]; then deb_require; deb+=("$(stage_deb_file "$t")"); continue; fi ;;
+            *.pkg.tar*) if [[ -f $t ]]; then archfiles+=("$t"); continue; fi ;;
+        esac
+        if [[ $force != debian ]] && provided_by_base "$t"; then
+            info "$t è già fornito dal sistema base LFS (arcbase-base): salto"
+            continue
+        fi
+        if [[ -n $force ]]; then b=$force; else b=$(resolve_backend "$t"); fi
+        case $b in
+            arch)   arch+=("$t") ;;
+            debian) deb+=("$t") ;;
+            *)      missing+=("$t") ;;
+        esac
+    done
+    if (( ${#missing[@]} )); then
+        die "non trovato né nei repository Arch né in Debian: ${missing[*]}"
+    fi
+    (( yes )) && { pac_opts+=(--noconfirm); apt_opts+=(-y); }
+    (( ${#arch[@]} + ${#archfiles[@]} + ${#deb[@]} )) || return 0
+
+    if (( ${#arch[@]} )); then
+        msg "Installazione da Arch Linux (pacman): ${arch[*]}"
+        $PACMAN -S --needed "${pac_opts[@]}" -- "${arch[@]}" || rc=$?
+    fi
+    if (( ${#archfiles[@]} )); then
+        msg "Installazione di pacchetti pacman locali"
+        $PACMAN -U "${pac_opts[@]}" -- "${archfiles[@]}" || rc=$?
+    fi
+    if (( ${#deb[@]} )); then
+        deb_require
+        msg "Installazione da Debian $ARC_DEBIAN_SUITE (apt): ${deb[*]##*/}"
+        deb_root_exec apt-get install "${apt_opts[@]}" "${deb[@]}" || rc=$?
+        after_debian_change
+    fi
+    return "$rc"
+}
+
+cmd_remove() {
+    local force='' yes=0 p rc=0
+    local -a arch=() deb=() missing=() pac_opts=() apt_opts=()
+    while (( $# )); do
+        case $1 in
+            -a|--arch) force=arch ;;
+            -d|--deb|--debian) force=debian ;;
+            -y|--yes|--noconfirm) yes=1 ;;
+            --) shift; break ;;
+            -*) die "opzione sconosciuta: $1" ;;
+            *) break ;;
+        esac
+        shift
+    done
+    (( $# )) || die "uso: arc remove [--arch|--deb] [-y] <pacchetto>..."
+    require_root
+    for p; do
+        if [[ $p == arcbase-base ]]; then
+            die "arcbase-base rappresenta il sistema LFS e non può essere rimosso"
+        fi
+        if [[ $force != debian ]] && provided_by_base "$p"; then
+            die "$p fa parte del sistema base LFS (arcbase-base) e non può essere rimosso"
+        elif [[ $force != debian ]] && $PACMAN -Qq -- "$p" >/dev/null 2>&1; then
+            arch+=("$p")
+        elif [[ $force != arch ]] && deb_ready && deb_installed "$p"; then
+            deb+=("$p")
+        else
+            missing+=("$p")
+        fi
+    done
+    (( ${#missing[@]} )) && warn "non installati: ${missing[*]}"
+    (( yes )) && { pac_opts+=(--noconfirm); apt_opts+=(-y); }
+    if (( ${#arch[@]} )); then
+        msg "Rimozione (pacman): ${arch[*]}"
+        $PACMAN -Rs "${pac_opts[@]}" -- "${arch[@]}" || rc=$?
+    fi
+    if (( ${#deb[@]} )); then
+        msg "Rimozione (apt): ${deb[*]}"
+        deb_root_exec apt-get remove --autoremove "${apt_opts[@]}" "${deb[@]}" || rc=$?
+        after_debian_change
+    fi
+    return "$rc"
+}
+
+cmd_update() {
+    local rc=0
+    require_root
+    msg "Aggiornamento indici Arch Linux"
+    $PACMAN -Sy || rc=$?
+    if deb_ready; then
+        msg "Aggiornamento indici Debian $ARC_DEBIAN_SUITE"
+        deb_root_exec apt-get update || rc=$?
+    fi
+    return "$rc"
+}
+
+cmd_upgrade() {
+    local yes=0 rc=0
+    local -a pac_opts=() apt_opts=()
+    [[ ${1:-} == -y || ${1:-} == --yes ]] && yes=1
+    (( yes )) && { pac_opts+=(--noconfirm); apt_opts+=(-y); }
+    require_root
+    if [[ $ARC_RUNTIME_SYNC == auto ]] && command -v arcbase-runtime-sync >/dev/null 2>&1; then
+        $PACMAN -Sy || rc=$?
+        arcbase-runtime-sync ${pac_opts[@]+"${pac_opts[@]}"} || rc=$?
+    fi
+    msg "Aggiornamento del sistema (pacman)"
+    $PACMAN -Syu "${pac_opts[@]}" || rc=$?
+    if deb_ready; then
+        msg "Aggiornamento del layer Debian (apt)"
+        deb_root_exec apt-get update || rc=$?
+        deb_root_exec apt-get full-upgrade "${apt_opts[@]}" || rc=$?
+        after_debian_change
+    fi
+    return "$rc"
+}
+
+cmd_search() {
+    local out
+    (( $# )) || die "uso: arc search <termine>..."
+    msg "Arch Linux (pacman)"
+    if ! $PACMAN -Ss -- "$@"; then info "nessun risultato"; fi
+    if deb_ready; then
+        msg "Debian $ARC_DEBIAN_SUITE (apt)"
+        out=$(deb_exec apt-cache search "$@" | sort)
+        if [[ -n $out ]]; then printf '%s\n' "$out"; else info "nessun risultato"; fi
+    fi
+}
+
+cmd_info() {
+    local p found
+    (( $# )) || die "uso: arc info <pacchetto>..."
+    for p; do
+        found=0
+        if $PACMAN -Qi -- "$p" 2>/dev/null || $PACMAN -Si -- "$p" 2>/dev/null; then
+            found=1
+        elif $PACMAN -T -- "$p" >/dev/null 2>&1; then
+            printf '%s è fornito dal sistema base LFS (arcbase-base)\n\n' "$p"
+            found=1
+        fi
+        if deb_ready && deb_exec apt-cache show --no-all-versions "$p" 2>/dev/null; then
+            found=1
+        fi
+        (( found )) || warn "$p: pacchetto non trovato"
+    done
+}
+
+cmd_list() {
+    local which=${1:-all} p
+    if [[ $which == all || $which == -a || $which == --arch ]]; then
+        while read -r p v; do
+            [[ $p == arcbase-base ]] && continue
+            printf '%s %s %s\n' "$(tag_arch)" "$p" "$v"
+        done < <($PACMAN -Qe 2>/dev/null)
+    fi
+    if [[ $which == all || $which == -d || $which == --deb ]] && deb_ready; then
+        while read -r p; do
+            printf '%s %s %s\n' "$(tag_deb)" "$p" "$(deb_pkg_version "$p")"
+        done < <(deb_user_pkgs)
+    fi
+}
+
+cmd_origin() {
+    local p
+    (( $# )) || die "uso: arc origin <pacchetto>..."
+    for p; do
+        if [[ $p == arcbase-base ]] || provided_by_base "$p"; then
+            echo "$p: sistema base LFS (compilato da sorgente, arcbase-base)"
+        elif $PACMAN -Qq -- "$p" >/dev/null 2>&1; then
+            echo "$p: installato da Arch Linux (pacman)"
+        elif deb_ready && deb_installed "$p"; then
+            echo "$p: installato nel layer Debian (apt)"
+        else
+            case $(resolve_backend "$p") in
+                arch)   echo "$p: non installato, disponibile in Arch Linux" ;;
+                debian) echo "$p: non installato, disponibile in Debian $ARC_DEBIAN_SUITE" ;;
+                *)      echo "$p: non trovato" ;;
+            esac
+        fi
+    done
+}
+
+cmd_run() {
+    [[ ${1:-} == -- ]] && shift
+    (( $# )) || die "uso: arc run <comando> [argomenti...]"
+    deb_require
+    deb_user_exec "$@"
+}
+
+cmd_shell() {
+    deb_require
+    deb_user_exec /bin/bash -l
+}
+
+cmd_deb() {
+    local sub=${1:-status}
+    shift || :
+    case $sub in
+        init)   require_root; layer_init ;;
+        status) layer_status ;;
+        shell)  require_root; deb_require; deb_root_exec /bin/bash -l ;;
+        reset)
+            require_root
+            if [[ ${1:-} != --yes ]]; then
+                read -r -p "Rimuovere il layer Debian e tutte le app installate? [s/N] " ans
+                [[ $ans == [sSyY]* ]] || die "annullato"
+            fi
+            layer_reset
+            ;;
+        *) die "uso: arc deb init|status|shell|reset" ;;
+    esac
+}
+
+cmd_export() {
+    require_root
+    deb_require
+    if (( $# )); then export_force "$@"; else export_sync; fi
+}
+
+cmd_unexport() {
+    (( $# )) || die "uso: arc unexport <pacchetto>..."
+    require_root
+    export_deny "$@"
+}
+
+# Converte un .deb in un pacchetto pacman nativo (stile debtap, senza dipendenze)
+cmd_deb2pkg() {
+    local debfile=${1:-} out=${2:-$PWD} work ctl name ver arch desc url deps pkgname pkgver
+    [[ -f $debfile ]] || die "uso: arc deb2pkg <file.deb> [directory-di-output]"
+    command -v makepkg >/dev/null 2>&1 || die "makepkg non trovato"
+    debfile=$(readlink -f "$debfile")
+    out=$(readlink -f "$out")
+    work=$(mktemp -d)
+    bsdtar -xf "$debfile" -C "$work" || die "impossibile leggere $debfile"
+    ctl=$(find "$work" -maxdepth 1 -name 'control.tar*' | head -n1)
+    [[ -n $ctl ]] || die "$debfile non sembra un pacchetto Debian valido"
+    mkdir "$work/control"
+    bsdtar -xf "$ctl" -C "$work/control"
+    field() { awk -v f="$1" 'BEGIN{IGNORECASE=1} $0 ~ "^" f ":" { sub("^[^:]*: *", ""); print; exit }' "$work/control/control"; }
+    name=$(field Package); ver=$(field Version); arch=$(field Architecture)
+    desc=$(field Description); url=$(field Homepage); deps=$(field Depends)
+    pkgname="deb-${name,,}"
+    pkgver=$(printf '%s' "$ver" | tr -- '-:~' '___' | tr -cd '[:alnum:]._+')
+    case $arch in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; all) arch=any ;; esac
+    cp "$debfile" "$work/${debfile##*/}"
+    cat > "$work/PKGBUILD" <<EOF
+# Generato da 'arc deb2pkg' a partire da ${debfile##*/}
+pkgname=$pkgname
+pkgver=$pkgver
+pkgrel=1
+pkgdesc=$(printf '%q' "$desc (convertito da .deb)")
+arch=('$arch')
+url=$(printf '%q' "${url:-https://www.debian.org}")
+license=('custom')
+options=('!strip' '!debug' 'emptydirs')
+provides=('$name')
+source=($(printf '%q' "${debfile##*/}"))
+noextract=($(printf '%q' "${debfile##*/}"))
+sha256sums=('SKIP')
+
+package() {
+    cd "\$srcdir"
+    bsdtar -xf $(printf '%q' "${debfile##*/}") 'data.tar*'
+    bsdtar -xf data.tar* -C "\$pkgdir"
+    # Arcbase: /bin, /sbin, /lib sono link simbolici verso /usr
+    # (come in Arch: /usr/sbin -> bin, /lib64 e /usr/lib64 -> lib)
+    local src dst
+    for src in bin:usr/bin sbin:usr/bin lib:usr/lib lib64:usr/lib usr/sbin:usr/bin usr/lib64:usr/lib; do
+        dst=\${src#*:}; src=\${src%%:*}
+        if [[ -d \$pkgdir/\$src && ! -L \$pkgdir/\$src ]]; then
+            mkdir -p "\$pkgdir/\$dst"
+            cp -a "\$pkgdir/\$src/." "\$pkgdir/\$dst/"
+            rm -rf "\$pkgdir/\$src"
+        fi
+    done
+}
+EOF
+    msg "Compilazione di $pkgname $pkgver"
+    if is_root; then
+        chown -R nobody: "$work"
+        (cd "$work" && runuser -u nobody -- env PKGDEST="$work" makepkg -f --nodeps) || die "makepkg fallito"
+    else
+        (cd "$work" && PKGDEST="$work" makepkg -f --nodeps) || die "makepkg fallito"
+    fi
+    mkdir -p "$out"
+    cp "$work"/*.pkg.tar.* "$out"/
+    rm -rf "$work"
+    msg "Pacchetto creato in $out"
+    [[ -n $deps ]] && warn "dipendenze Debian da verificare a mano: $deps"
+    info "installalo con: sudo arc install $out/$pkgname-*.pkg.tar.*"
+}
+
+cmd_doctor() {
+    local ok=0 bad=0 v
+    check() {  # check <descrizione> <comando...>
+        local d=$1; shift
+        if "$@" >/dev/null 2>&1; then
+            printf '  %s✔%s %s\n' "$C_G" "$C_0" "$d"; ok=$((ok + 1))
+        else
+            printf '  %s✘%s %s\n' "$C_R" "$C_0" "$d"; bad=$((bad + 1))
+        fi
+    }
+    msg "pacman (host)"
+    check "pacman installato" command -v "$PACMAN"
+    check "arcbase-base registrato" "$PACMAN" -Q arcbase-base
+    check "portachiavi Arch inizializzato" test -s /etc/pacman.d/gnupg/pubring.gpg -o -s /etc/pacman.d/gnupg/pubring.kbx
+    check "repository sincronizzati" test -n "$(ls -A /var/lib/pacman/sync 2>/dev/null)"
+    msg "apt (layer Debian)"
+    check "bubblewrap installato" command -v "$BWRAP"
+    check "debootstrap installato" command -v debootstrap
+    check "keyring Debian presente" test -r "$ARC_DEBIAN_KEYRING"
+    check "layer Debian inizializzato" deb_ready
+    if deb_ready; then
+        check "esecuzione nel layer come utente" deb_user_exec /bin/true
+        check "indici apt presenti" test -n "$(ls -A "$ARC_DEBIAN_ROOT/var/lib/apt/lists" 2>/dev/null)"
+    fi
+    msg "Compatibilità ABI"
+    if command -v arcbase-runtime-sync >/dev/null 2>&1; then
+        v=$(arcbase-runtime-sync --check 2>/dev/null) || :
+        if [[ -n $v ]]; then
+            printf '  %s!%s librerie runtime più vecchie dei repository Arch: %s\n' "$C_Y" "$C_0" "$v"
+            info "esegui 'sudo arc sync-runtime' (o 'sudo arc upgrade')"
+        else
+            printf '  %s✔%s librerie runtime allineate\n' "$C_G" "$C_0"
+        fi
+    fi
+    if [[ ${1:-} == --abi ]] && command -v arcbase-abi-check >/dev/null 2>&1; then
+        info "scansione dei binari installati da pacman (può richiedere tempo)..."
+        $PACMAN -Qlq 2>/dev/null | sed 's|^/||' | arcbase-abi-check --report
+    fi
+    echo
+    if (( bad )); then
+        warn "$bad controlli falliti, $ok superati"
+        return 1
+    fi
+    msg "Tutto in ordine ($ok controlli)"
+}
+
+usage() {
+    cat <<EOF
+arc $ARC_VERSION — gestore di pacchetti unificato di Arcbase Desktop (pacman + apt)
+
+Uso: arc <comando> [opzioni] [argomenti]
+
+Pacchetti
+  install [-a|--arch] [-d|--deb] [-y] <pkg|file.deb|file.pkg.tar.zst>...
+                         installa; senza -a/-d cerca prima in "${ARC_PREFER}" poi nell'altro
+  remove  [-a|-d] [-y] <pkg>...   rimuove (l'origine viene rilevata da sola)
+  update                 aggiorna gli indici di pacman e apt
+  upgrade [-y]           aggiorna tutto il sistema (Arch + layer Debian)
+  search  <termine>      cerca nei repository Arch e Debian
+  info    <pkg>          informazioni sul pacchetto
+  list    [-a|-d]        pacchetti installati esplicitamente
+  origin  <pkg>          da dove proviene (o proverrebbe) un pacchetto
+
+Layer Debian
+  deb init|status|shell|reset    gestione del root Debian isolato
+  run <comando> [arg...]         esegue un programma del layer Debian
+  shell                          shell interattiva nel layer Debian
+  export [pkg...]                esporta app nel menu e nel PATH (senza argomenti: sincronizza)
+  unexport <pkg>...              rimuove le esportazioni di un pacchetto
+  deb2pkg <file.deb> [dir]       converte un .deb in pacchetto pacman nativo
+
+Sistema
+  doctor [--abi]         diagnostica dell'integrazione pacman/apt
+  sync-runtime           allinea glibc/gcc-libs ai repository Arch se più recenti
+  version | help
+
+I comandi apt, apt-get, apt-cache, apt-mark, dpkg e dpkg-query operano sul
+layer Debian; pacman opera sul sistema host.
+EOF
+}
+
+# --- Modalità "shim": invocato come apt/dpkg ---------------------------------------
+shim_main() {
+    local tool=$1 a rc
+    shift
+    [[ ${ARC_SHIM_DISABLE:-0} == 1 ]] && exit 127
+    if ! deb_ready; then
+        echo "$tool: il layer Debian di Arcbase non è inizializzato (esegui: sudo arc deb init)" >&2
+        exit 1
+    fi
+    if is_root; then
+        # I file .deb locali vanno copiati nel layer per essere visibili ad apt/dpkg
+        local -a args=()
+        for a; do
+            if [[ $a == *.deb && -f $a ]]; then args+=("$(stage_deb_file "$a")"); else args+=("$a"); fi
+        done
+        deb_root_exec "$tool" ${args[@]+"${args[@]}"}
+        rc=$?
+        after_debian_change
+        exit "$rc"
+    fi
+    deb_user_exec "$tool" "$@"
+    exit $?
+}
+
+case ${0##*/} in
+    apt|apt-get|apt-cache|apt-mark|dpkg|dpkg-query)
+        shim_main "${0##*/}" "$@"
+        ;;
+esac
+
+cmd=${1:-help}
+shift || :
+case $cmd in
+    install|in|i)       cmd_install "$@" ;;
+    remove|rm|uninstall) cmd_remove "$@" ;;
+    update|up)          cmd_update "$@" ;;
+    upgrade|ug)         cmd_upgrade "$@" ;;
+    search|s)           cmd_search "$@" ;;
+    info|show)          cmd_info "$@" ;;
+    list|ls)            cmd_list "$@" ;;
+    origin|which)       cmd_origin "$@" ;;
+    run)                cmd_run "$@" ;;
+    shell)              cmd_shell "$@" ;;
+    deb|layer)          cmd_deb "$@" ;;
+    export)             cmd_export "$@" ;;
+    unexport)           cmd_unexport "$@" ;;
+    deb2pkg)            cmd_deb2pkg "$@" ;;
+    doctor)             cmd_doctor "$@" ;;
+    sync-runtime)       require_root; exec arcbase-runtime-sync "$@" ;;
+    version|--version|-V) echo "arc $ARC_VERSION" ;;
+    help|--help|-h)     usage ;;
+    *)                  usage >&2; die "comando sconosciuto: $cmd" ;;
+esac

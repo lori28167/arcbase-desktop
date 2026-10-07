@@ -1,0 +1,24 @@
+# KDE Plasma (Wayland + Xwayland) — pacchetti dai repository Arch
+# display-manager: sddm
+plasma-desktop
+plasma-nm
+plasma-pa
+powerdevil
+kscreen
+bluedevil
+breeze-gtk
+kde-gtk-config
+kinfocenter
+systemsettings
+xdg-desktop-portal-kde
+sddm
+sddm-kcm
+konsole
+dolphin
+kate
+ark
+spectacle
+gwenview
+okular
+discover
+xorg-xwayland

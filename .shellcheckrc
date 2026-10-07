@@ -1,0 +1,9 @@
+# Arcbase Desktop — configurazione di shellcheck
+# I percorsi "source=" sono relativi allo script che li contiene
+source-path=SCRIPTDIR
+external-sources=true
+# Le ricette di build girano con `set -e` in una subshell: un cd/pushd fallito
+# interrompe già la ricetta.
+disable=SC2164
+# Molte ricette LFS usano volutamente '$' letterali in sed (es. '$add_dir').
+disable=SC2016

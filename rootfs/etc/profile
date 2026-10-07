@@ -1,0 +1,33 @@
+# Arcbase Desktop — /etc/profile
+# Ambiente di sistema per le shell di login (compatibile con i file che i
+# pacchetti Arch installano in /etc/profile.d).
+
+append_path () {
+    case ":$PATH:" in
+        *:"$1":*) ;;
+        *) PATH="${PATH:+$PATH:}$1" ;;
+    esac
+}
+PATH=/usr/local/sbin:/usr/local/bin
+append_path /usr/bin
+unset -f append_path
+export PATH
+
+umask 022
+
+# Lingua di sistema (systemd-localed)
+if [ -z "$LANG" ] && [ -r /etc/locale.conf ]; then
+    . /etc/locale.conf
+    export LANG
+fi
+
+if [ -d /etc/profile.d ]; then
+    for script in /etc/profile.d/*.sh; do
+        [ -r "$script" ] && . "$script"
+    done
+    unset script
+fi
+
+if [ -n "${BASH_VERSION-}" ] && [ -r /etc/bash.bashrc ]; then
+    case $- in *i*) . /etc/bash.bashrc ;; esac
+fi

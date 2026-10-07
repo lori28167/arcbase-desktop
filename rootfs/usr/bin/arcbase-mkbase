@@ -1,0 +1,77 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-mkbase — registra il sistema base LFS nel database di pacman
+#
+#  Genera e installa il pacchetto virtuale "arcbase-base" (nessun file) che
+#  dichiara  provides=  per ogni componente compilato da sorgente, elencato in
+#  /usr/share/arcbase/base-provides.list (nome=versione e soname=N-64).
+#  I componenti "adottati" dai repository Arch (vedi arcbase-runtime-sync,
+#  /var/lib/arcbase/adopted.list) vengono esclusi.
+#
+#  Uso: arcbase-mkbase [--nodeps] [--print]
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+LIST=${ARC_BASE_PROVIDES:-/usr/share/arcbase/base-provides.list}
+ADOPTED=${ARC_ADOPTED:-/var/lib/arcbase/adopted.list}
+PACMAN=${ARC_PACMAN:-pacman}
+
+nodeps=0 print=0
+for a; do
+    case $a in
+        --nodeps) nodeps=1 ;;
+        --print)  print=1 ;;
+        *) echo "uso: $0 [--nodeps] [--print]" >&2; exit 2 ;;
+    esac
+done
+
+[[ -r $LIST ]] || { echo "arcbase-mkbase: $LIST mancante" >&2; exit 1; }
+# shellcheck source=/dev/null
+. /usr/lib/os-release
+
+pkgver="${VERSION_ID:-1.0}.$(date -u +%Y%m%d%H%M%S)"
+arch=$(uname -m)
+
+pkginfo() {
+    local line name
+    cat <<EOF
+# Generato da arcbase-mkbase $(date -u +%FT%TZ)
+pkgname = arcbase-base
+pkgbase = arcbase-base
+xdata = pkgtype=pkg
+pkgver = $pkgver-1
+pkgdesc = ${NAME:-Arcbase} - sistema base compilato da sorgente (Linux From Scratch)
+url = ${HOME_URL:-https://github.com/lori28167/arcbase-desktop}
+builddate = $(date +%s)
+packager = Arcbase build system
+size = 0
+arch = $arch
+license = custom:arcbase
+EOF
+    while IFS= read -r line; do
+        [[ -z $line || $line == \#* ]] && continue
+        name=${line%%=*}
+        if [[ -r $ADOPTED ]] && grep -qxF -- "$name" "$ADOPTED"; then
+            continue
+        fi
+        printf 'provides = %s\n' "$line"
+    done < "$LIST"
+}
+
+if (( print )); then
+    pkginfo
+    exit 0
+fi
+
+[[ $EUID -eq 0 ]] || { echo "arcbase-mkbase: serve root" >&2; exit 1; }
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+pkginfo > "$work/.PKGINFO"
+pkg="$work/arcbase-base-$pkgver-1-$arch.pkg.tar.zst"
+(cd "$work" && bsdtar -cf - .PKGINFO) | zstd -q -c > "$pkg"
+
+opts=(--noconfirm)
+(( nodeps )) && opts+=(--nodeps --nodeps)
+"$PACMAN" -U "${opts[@]}" "$pkg"
+"$PACMAN" -D --asexplicit arcbase-base >/dev/null
+echo "arcbase-base $pkgver registrato ($(grep -c '^provides' "$work/.PKGINFO") provides)"

@@ -1,0 +1,17 @@
+# Arcbase Desktop — hook ALPM
+# Segnala i binari installati da Arch che richiedono librerie più recenti
+# di quelle del sistema base LFS (vedi `arc sync-runtime`).
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = usr/bin/*
+Target = usr/lib/*.so*
+Target = usr/lib/*/*.so*
+Target = usr/libexec/*
+
+[Action]
+Description = Verifica di compatibilità ABI con il sistema base...
+When = PostTransaction
+Exec = /usr/bin/arcbase-abi-check
+NeedsTargets
