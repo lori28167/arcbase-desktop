@@ -53,7 +53,9 @@ umount_vkfs() {
 }
 
 chroot_exec() {
-    chroot "$LFS" /usr/bin/env -i          \
+    local -a cfg
+    mapfile -t cfg < <(config_env)
+    chroot "$LFS" /usr/bin/env -i "${cfg[@]}" \
         HOME=/root                         \
         TERM="${TERM:-xterm}"              \
         PS1='(arcbase chroot) \u:\w\$ '    \
@@ -83,12 +85,12 @@ merge_usr() {
             fi
         done
         rmdir "$LFS/usr/sbin"
-        ln -sv bin "$LFS/usr/sbin"
+        ln -sfnv bin "$LFS/usr/sbin"
     fi
     if [[ ! -L $LFS/lib64 ]]; then
         msg "/lib64 -> usr/lib"
         rm -rf "${LFS:?}/lib64"
-        ln -sv usr/lib "$LFS/lib64"
+        ln -sfnv usr/lib "$LFS/lib64"
     fi
     [[ -e $LFS/usr/lib64 ]] || ln -sv lib "$LFS/usr/lib64"
 }

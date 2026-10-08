@@ -79,6 +79,18 @@ check "uscita con errore"               test $? -ne 0
 check "errexit attivo nella ricetta"    test ! -e "$T/lfs/broken.reached"
 check "nessuno stamp per il fallimento" test ! -e "$T/lfs/sources/.arcbase-stamps/test-broken.done"
 
+echo "configurazione ereditata da make"
+cfg() { env -u ARC_JOBS LFS="$T/lfs" "$@" bash -c 'source "$0/scripts/lib/common.sh"; '"$CMD" "$T/tree"; }
+CMD='echo "$MAKEFLAGS"'
+check "MAKEFLAGS vuoto (make) => -jN"           test "$(cfg MAKEFLAGS='')" = "-j$(nproc)"
+check "jobserver di make non ereditato"         test "$(cfg MAKEFLAGS=' --jobserver-auth=3,4')" = "-j$(nproc)"
+check "ARC_JOBS rispettato"                     test "$(cfg ARC_JOBS=3)" = "-j3"
+CMD='config_env'
+out=$(cfg ARC_DESKTOP=gnome ARC_ROOT_PASSWORD=segreta)
+check "ARC_DESKTOP passato al chroot"           grep -qx 'ARC_DESKTOP=gnome' <<<"$out"
+check "password passate al chroot"              grep -qx 'ARC_ROOT_PASSWORD=segreta' <<<"$out"
+check "LFS stesso non passato (vale \"\" nel chroot)" bash -c '! grep -q "^LFS=" <<<"$0"' "$out"
+
 echo
 echo "Risultato: $pass superati, $fail falliti"
 (( fail == 0 ))

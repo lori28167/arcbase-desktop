@@ -61,17 +61,26 @@ if (( check )); then
     exit 0
 fi
 (( ${#adopt[@]} )) || { echo "==> librerie runtime già allineate"; exit 0; }
-[[ $EUID -eq 0 ]] || { echo "arcbase-runtime-sync: serve root" >&2; exit 1; }
+[[ $EUID -eq 0 || ${ARC_ASSUME_ROOT:-0} == 1 ]] || { echo "arcbase-runtime-sync: serve root" >&2; exit 1; }
 
+# L'adozione è transazionale: la nuova lista viene scritta solo se pacman
+# installa davvero i pacchetti; altrimenti arcbase-base torna com'era.
 mkdir -p "${ADOPTED%/*}"
-printf '%s\n' "${adopt[@]}" >> "$ADOPTED"
-sort -u -o "$ADOPTED" "$ADOPTED"
+new=$(mktemp "${ADOPTED}.XXXXXX")
+trap 'rm -f "$new"' EXIT
+{ cat "$ADOPTED" 2>/dev/null; printf '%s\n' "${adopt[@]}"; } | sort -u > "$new"
 
 # 1) arcbase-base senza i provides adottati (le dipendenze inverse saranno
 #    di nuovo soddisfatte al passo 2)
-arcbase-mkbase --nodeps || exit 1
+ARC_ADOPTED=$new arcbase-mkbase --nodeps || exit 1
 # 2) installazione dei pacchetti Arch sopra i file LFS
-"$PACMAN" -S "${opts[@]+"${opts[@]}"}" --overwrite '*' --asdeps -- "${adopt[@]}" || exit 1
+if ! "$PACMAN" -S "${opts[@]+"${opts[@]}"}" --overwrite '*' --asdeps -- "${adopt[@]}"; then
+    echo "==> installazione annullata o fallita: ripristino di arcbase-base" >&2
+    arcbase-mkbase --nodeps || echo "==> ERRORE: ripristino fallito, eseguire 'arcbase-mkbase --nodeps'" >&2
+    exit 1
+fi
+mv -f "$new" "$ADOPTED"
+chmod 644 "$ADOPTED"
 "$PACMAN" -D --asexplicit -- "${adopt[@]}" >/dev/null
 # Le locale generate con localedef restano valide; le rigeneriamo per sicurezza
 if [[ " ${adopt[*]} " == *" glibc "* && -r /etc/locale.conf ]]; then

@@ -41,7 +41,7 @@ build_ncurses() {
                 AWK=gawk
     make
     make DESTDIR="$LFS" TIC_PATH="$(pwd)/build/progs/tic" install
-    ln -sv libncursesw.so "$LFS/usr/lib/libncurses.so"
+    ln -sfv libncursesw.so "$LFS/usr/lib/libncurses.so"
     sed -e 's/^#if.*XOPEN.*$/#if 1/' -i "$LFS/usr/include/curses.h"
 }
 
@@ -193,7 +193,7 @@ build_gcc_pass2() {
         --enable-languages=c,c++
     make
     make DESTDIR="$LFS" install
-    ln -sv gcc "$LFS/usr/bin/cc"
+    ln -sfv gcc "$LFS/usr/bin/cc"
 }
 
 for p in m4 ncurses bash coreutils diffutils file findutils gawk grep gzip make patch sed tar xz; do

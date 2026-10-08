@@ -51,10 +51,13 @@ if [[ -n $esp ]]; then
     mkdir -p /boot/efi
     mountpoint -q /boot/efi || mount "$esp" /boot/efi
     echo "==> GRUB UEFI (x86_64-efi)"
-    if (( removable )); then
-        grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram
-    else
+    if (( ! removable )) && command -v efibootmgr >/dev/null 2>&1; then
         grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=arcbase
+    else
+        # Senza efibootmgr non si può scrivere la voce NVRAM: si usa il percorso
+        # di fallback \EFI\BOOT\BOOTX64.EFI, che ogni firmware UEFI avvia.
+        (( removable )) || echo "efibootmgr non disponibile: installo GRUB nel percorso UEFI di fallback" >&2
+        grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram
     fi
 fi
 if (( bios )); then

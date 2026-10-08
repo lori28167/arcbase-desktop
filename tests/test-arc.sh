@@ -80,6 +80,7 @@ echo "$*" >> "$D/pacman.log"
 op=$1; shift
 pkg=${*: -1}
 case $op in
+    -S)   [[ -e $D/pacman-fail ]] && exit 1; exit 0 ;;
     -Si)  grep -qx -- "$pkg" "$D/arch-available" || exit 1
           printf 'Name            : %s\n' "$pkg"
           [[ -f $D/arch-version-$pkg ]] && printf 'Version         : %s\n' "$(cat "$D/arch-version-$pkg")"
@@ -98,6 +99,7 @@ cat > "$T/bin/bwrap" <<'EOF'
 D=$(cd "$(dirname "$0")/.." && pwd)
 L=$D/debian
 mode=user
+echo "$*" >> "$D/bwrap-args.log"
 while [[ $# -gt 0 && $1 != -- ]]; do
     [[ $1 == --bind && ${3:-} == / ]] && mode=root
     shift
@@ -149,6 +151,9 @@ export ARC_CONF=/nonexistent ARC_LIBDIR="$REPO/rootfs/usr/lib/arcbase"
 export ARC_STATEDIR="$T/state" ARC_DEBIAN_ROOT="$L" ARC_EXPORT_PREFIX="$T/local"
 export ARC_PACMAN="$T/bin/pacman" ARC_BWRAP="$T/bin/bwrap" ARC_ROOT_BACKEND=bwrap
 export ARC_ASSUME_ROOT=1 ARC_PREFER=arch
+# Comandi "dell'host": quelli veri più una directory controllata dai test
+mkdir -p "$T/hostbin"
+export ARC_HOST_BIN_DIRS="$T/hostbin /usr/bin /bin"
 
 # --- Test --------------------------------------------------------------------------
 echo "arc: risoluzione dell'origine"
@@ -248,7 +253,7 @@ echo "arcbase-mkbase"
 mkdir -p "$T/etc"
 printf 'glibc=2.41\ngcc-libs=14.2.0\nzlib=1.3.1\nlibz.so=1-64\n# commento\n' > "$T/provides.list"
 printf 'gcc-libs\n' > "$T/adopted.list"
-out=$(ARC_BASE_PROVIDES=$T/provides.list ARC_ADOPTED=$T/adopted.list arcbase-mkbase --print)
+out=$(ARC_BASE_PROVIDES=$T/provides.list ARC_ADOPTED=$T/adopted.list "$REPO/rootfs/usr/bin/arcbase-mkbase" --print)
 check "pkgname arcbase-base"                grep -q '^pkgname = arcbase-base' <<<"$out"
 check "provides glibc"                      grep -q '^provides = glibc=2.41' <<<"$out"
 check "provides soname"                     grep -q '^provides = libz.so=1-64' <<<"$out"
@@ -262,9 +267,83 @@ out=$(ARC_BASE_PROVIDES=$T/provides.list ARC_ADOPTED=$T/adopted.list \
 check "glibc più recente in Arch => adottato"  grep -qw glibc <<<"$out"
 check "gcc-libs uguale => non adottato"         bash -c '! grep -qw gcc-libs <<<"$0"' "$out"
 
+echo "arcbase-runtime-sync: adozione transazionale"
+cat > "$T/bin/arcbase-mkbase" <<'EOF2'
+#!/bin/bash
+D=$(cd "$(dirname "$0")/.." && pwd)
+echo "mkbase adopted=[$(paste -sd, "$ARC_ADOPTED" 2>/dev/null)]" >> "$D/mkbase.log"
+EOF2
+chmod +x "$T/bin/arcbase-mkbase"
+: > "$T/adopted.list"; : > "$T/mkbase.log"; touch "$T/pacman-fail"
+ARC_BASE_PROVIDES=$T/provides.list ARC_ADOPTED=$T/adopted.list ARC_RUNTIME_SYNC_PKGS=glibc \
+    arcbase-runtime-sync --noconfirm >/dev/null 2>&1
+check "pacman fallito => errore"                test $? -ne 0
+check "adopted.list invariata"                  test ! -s "$T/adopted.list"
+check "arcbase-base senza glibc, poi ripristinato" \
+    bash -c '[[ $(sed -n 1p "$1") == "mkbase adopted=[glibc]" && $(sed -n 2p "$1") == "mkbase adopted=[]" ]]' _ "$T/mkbase.log"
+rm -f "$T/pacman-fail"
+ARC_BASE_PROVIDES=$T/provides.list ARC_ADOPTED=$T/adopted.list ARC_RUNTIME_SYNC_PKGS=glibc \
+    arcbase-runtime-sync --noconfirm >/dev/null 2>&1
+check "pacman riuscito => glibc adottata"       grep -qx glibc "$T/adopted.list"
+rm -f "$T/bin/arcbase-mkbase"
+
 echo "arcbase-abi-check"
 out=$(printf 'usr/bin/ls\nusr/share/doc/nulla\n' | arcbase-abi-check --report)
 check "binari dell'host senza problemi"     test $? -eq 0 -a -z "$out"
+
+echo "layer con migliaia di pacchetti (pipefail + grep -q)"
+cp "$L/var/lib/dpkg/status" "$T/status.bak"
+printf 'Package: aaa-primo\nStatus: install ok installed\nVersion: 1\n\n' >> "$L/var/lib/dpkg/status"
+awk 'BEGIN { for (i = 0; i < 30000; i++) printf "Package: zz-pkg%05d\nStatus: install ok installed\nVersion: 1\n\n", i }' \
+    >> "$L/var/lib/dpkg/status"
+out=$(arc origin aaa-primo 2>&1)
+check "pacchetto trovato nonostante SIGPIPE"    grep -q 'installato nel layer Debian' <<<"$out"
+cp "$T/status.bak" "$L/var/lib/dpkg/status"
+
+echo "esportazioni: aggiornamento, conflitti, link assoluti"
+arc install -y --deb foo >/dev/null 2>&1
+check "foo riesportato"                         test -x "$T/local/bin/foo"
+# aggiornamento del pacchetto: nuovo eseguibile e lista dpkg più recente
+printf '#!/bin/sh\n' > "$L/usr/bin/foo-new"; chmod +x "$L/usr/bin/foo-new"
+echo /usr/bin/foo-new >> "$T/pkgfiles/foo"
+cp "$T/pkgfiles/foo" "$L/var/lib/dpkg/info/foo.list"
+touch -d '1 hour ago' "$T/state/exports/foo.list"
+arc export >/dev/null 2>&1
+check "dopo l'upgrade il nuovo comando è esportato" test -x "$T/local/bin/foo-new"
+# pacman installa un comando "foo" sull'host
+printf '#!/bin/sh\n' > "$T/hostbin/foo"
+arc export >/dev/null 2>&1
+check "il wrapper che nasconde l'host è rimosso" test ! -e "$T/local/bin/foo"
+check "gli altri comandi del pacchetto restano"  test -x "$T/local/bin/foo-new"
+rm -f "$T/hostbin/foo"
+# due pacchetti con lo stesso comando
+printf '/usr/bin/fakels-tool\n' > "$T/pkgfiles/dup"; echo dup >> "$T/deb-available"
+arc install -y --deb dup >/dev/null 2>&1
+check "il wrapper resta del primo pacchetto"    has "$T/local/bin/fakels-tool" "# arcbase-export: fakels "
+arc remove -y dup >/dev/null 2>&1
+check "rimuovere il secondo non lo cancella"     test -x "$T/local/bin/fakels-tool"
+# link simbolico assoluto dentro il layer
+mkdir -p "$L/usr/share/code/bin"
+printf '#!/bin/sh\n' > "$L/usr/share/code/bin/code"; chmod +x "$L/usr/share/code/bin/code"
+ln -s /usr/share/code/bin/code "$L/usr/bin/code"
+printf '/usr/bin/code\n' > "$T/pkgfiles/code"; echo code >> "$T/deb-available"
+arc install -y --deb code >/dev/null 2>&1
+check "link assoluto risolto nel layer"         test -x "$T/local/bin/code"
+
+echo "pacchetto Debian con il nome di un componente del base"
+echo vim >> "$T/arch-provided"; echo vim >> "$T/deb-available"; : > "$T/pkgfiles/vim"
+arc install -y --deb vim >/dev/null 2>&1
+check "origin: vim nel layer Debian"            grep -q 'installato nel layer Debian' <<<"$(arc origin vim)"
+arc remove -y vim >/dev/null 2>&1
+check "remove senza --deb lo rimuove da Debian" has "$T/bwrap.log" "[root] apt-get remove --autoremove -y vim"
+
+echo "bubblewrap: punti di montaggio nel layer in sola lettura"
+rm -f "$L/etc/machine-id"; : > "$T/bwrap-args.log"
+arc run true >/dev/null 2>&1
+check "nessun bind su /etc/machine-id mancante" hasnt "$T/bwrap-args.log" "/etc/machine-id"
+mkdir -p "$L/etc"; : > "$L/etc/machine-id"; : > "$T/bwrap-args.log"
+arc run true >/dev/null 2>&1
+check "bind su /etc/machine-id se esiste"       has "$T/bwrap-args.log" "--ro-bind /etc/machine-id /etc/machine-id"
 
 echo "arc deb init (debootstrap simulato)"
 cat > "$T/bin/debootstrap" <<'EOF'
@@ -293,6 +372,7 @@ check "locale abilitata"                    has "$N/etc/locale.gen" "it_IT.UTF-8
 check "locale-gen eseguito nel layer"       has "$T/bwrap.log" "[root] locale-gen"
 check "baseline registrata"                 has "$T/state/debian-baseline.list" "apt"
 check "punto di montaggio dei font"         test -d "$N/usr/local/share/fonts"
+check "machine-id creato come punto di montaggio" test -e "$N/etc/machine-id"
 
 echo
 echo "Risultato: $pass superati, $fail falliti"

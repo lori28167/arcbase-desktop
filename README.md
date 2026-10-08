@@ -183,7 +183,8 @@ sudo dd if=out/arcbase-desktop-1.0-x86_64.img of=/dev/sdX bs=4M status=progress 
 ```
 
 Per installare su una partizione reale invece che su un'immagine, dopo aver copiato il
-sistema si usa `arcbase-bootloader --disk /dev/sdX --root /dev/sdX3 --esp /dev/sdX2`.
+sistema si usa `arcbase-bootloader --disk /dev/sdX --root /dev/sdX3 --esp /dev/sdX2`
+(senza `efibootmgr` GRUB viene installato nel percorso UEFI di fallback `\EFI\BOOT`).
 
 Credenziali iniziali: utente `arc` / password `arcbase` (anche per root).
 **Cambiale al primo accesso** con `passwd`, oppure impostale prima della build in
@@ -207,6 +208,7 @@ sovrascrivono in `config/local.conf` o come variabili d'ambiente. Le principali:
 | `ARC_PREFER` | `arch` | chi vince in `arc install <nome>` se esiste in entrambi |
 | `ARC_RUNTIME_SYNC` | `auto` | allineamento ABI di glibc/gcc-libs ad Arch |
 | `ARC_IMAGE_SIZE` | `32G` | dimensione dell'immagine disco |
+| `ARC_JOBS` | numero di CPU | processi di compilazione paralleli |
 | `LFS_TESTS` | `0` | `1` esegue le test suite di LFS (molto più lento) |
 
 Le versioni dei sorgenti sono in [`config/packages.conf`](config/packages.conf) e la

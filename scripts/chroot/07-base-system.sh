@@ -84,7 +84,7 @@ EOF
               asia australasia backward; do
         zic -L /dev/null   -d $ZONEINFO       "$tz"
         zic -L /dev/null   -d $ZONEINFO/posix "$tz"
-        zic -L leap-seconds -d $ZONEINFO/right "$tz"
+        zic -L leapseconds -d $ZONEINFO/right "$tz"
     done
     cp -v zone.tab zone1970.tab iso3166.tab $ZONEINFO
     zic -d $ZONEINFO -p America/New_York
@@ -322,8 +322,8 @@ build_gcc() {
     local triplet
     triplet=$(gcc -dumpmachine)
     chown -v -R root:root "/usr/lib/gcc/$triplet/$GCC_VER"/include{,-fixed}
-    ln -svr /usr/bin/cpp /usr/lib
-    ln -sv gcc.1 /usr/share/man/man1/cc.1
+    ln -sfvr /usr/bin/cpp /usr/lib
+    ln -sfv gcc.1 /usr/share/man/man1/cc.1
     ln -sfv "../../libexec/gcc/$triplet/$GCC_VER/liblto_plugin.so" /usr/lib/bfd-plugins/
     # Verifiche di sanità (LFS 8.29)
     echo 'int main(){}' > dummy.c
@@ -332,7 +332,10 @@ build_gcc() {
     grep -q 'crt1.o succeeded' dummy.log
     rm -v dummy.c a.out dummy.log
     mkdir -pv /usr/share/gdb/auto-load/usr/lib
-    mv -v /usr/lib/*gdb.py /usr/share/gdb/auto-load/usr/lib
+    local py
+    for py in /usr/lib/*gdb.py; do
+        [[ -e $py ]] && mv -v "$py" /usr/share/gdb/auto-load/usr/lib
+    done
 }
 
 build_ncurses() {

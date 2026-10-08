@@ -21,7 +21,8 @@ build_linux() {
     make olddefconfig
     # Controllo: le opzioni essenziali devono essere attive
     local opt
-    for opt in DEVTMPFS CGROUPS USER_NS EXT4_FS EFI_STUB BLK_DEV_NVME SATA_AHCI VIRTIO_BLK DRM; do
+    for opt in DEVTMPFS CGROUPS USER_NS EXT4_FS EFI_STUB BLK_DEV_NVME SATA_AHCI \
+               VIRTIO_BLK USB_STORAGE USB_UAS USB_XHCI_HCD MMC_BLOCK DRM; do
         grep -q "^CONFIG_$opt=y" .config || { echo "CONFIG_$opt non attiva"; exit 1; }
     done
     make

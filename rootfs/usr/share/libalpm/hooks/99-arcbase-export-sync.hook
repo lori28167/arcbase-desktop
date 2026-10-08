@@ -1,0 +1,13 @@
+# Arcbase Desktop — hook ALPM
+# Quando pacman installa un comando che un'app Debian esportata aveva già in
+# /usr/local/bin, il wrapper viene rimosso: l'host ha sempre la precedenza.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = usr/bin/*
+
+[Action]
+Description = Allineamento delle app esportate dal layer Debian...
+When = PostTransaction
+Exec = /usr/bin/arc export

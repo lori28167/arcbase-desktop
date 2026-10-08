@@ -33,8 +33,13 @@ if ! getent group lfs >/dev/null; then groupadd lfs; fi
 if ! id lfs >/dev/null 2>&1; then
     useradd -s /bin/bash -g lfs -m -k /dev/null lfs
 fi
-chown -v lfs "$LFS"/{usr{,/*},var,etc,tools,lib64}
-for d in bin lib sbin; do chown -h lfs "$LFS/$d"; done
+# Una sola volta: dopo il passaggio a root (05-chroot.sh) rifarlo
+# restituirebbe /usr, /etc e /var all'utente lfs.
+if ! is_done prepare-owner && ! is_done chroot-owner; then
+    chown -v lfs "$LFS"/{usr{,/*},var,etc,tools,lib64}
+    for d in bin lib sbin; do chown -h lfs "$LFS/$d"; done
+    mark_done prepare-owner
+fi
 
 msg "Copia dell'albero Arcbase in $LFS/arcbase"
 sync_tree

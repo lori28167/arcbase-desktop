@@ -32,6 +32,20 @@ while read -r name src; do
     fi
 done < "$REPO/config/arch-provides.map"
 
+# Regressioni note nelle ricette
+lint_rule() {  # lint_rule <descrizione> <regex vietata>
+    local hits
+    hits=$(grep -nE "$2" "$REPO"/scripts/*.sh "$REPO"/scripts/chroot/*.sh || :)
+    if [[ -n $hits ]]; then
+        printf '  \e[31m✘\e[0m %s\n%s\n' "$1" "${hits//$'\n'/$'\n      '}"
+        fail=$((fail + 1))
+    else
+        printf '  \e[32m✔\e[0m %s\n' "$1"
+    fi
+}
+lint_rule "tzdata: il file si chiama 'leapseconds'" 'zic -L leap-seconds'
+lint_rule "ricette rilanciabili: 'ln -s' sempre con -f" '^[[:space:]]+ln -s[a-eg-z]*[[:space:]]'
+
 echo
 echo "Ricette verificate: $total, stadi falliti: $fail"
 (( fail == 0 ))

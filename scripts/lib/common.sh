@@ -159,6 +159,17 @@ step() {
     mark_done "$id"
 }
 
+# Variabili di configurazione (ARC_*, LFS_*) come lista NOME=valore, da
+# passare agli ambienti puliti (utente lfs, chroot): così le impostazioni
+# date a `make` o esportate restano valide in ogni stadio.
+config_env() {
+    local v
+    for v in $(compgen -v | grep -E '^(ARC|LFS)_'); do
+        [[ $v == ARCBASE_DIR ]] && continue
+        printf '%s=%s\n' "$v" "${!v}"
+    done
+}
+
 # Rilancia lo script corrente come utente 'lfs' con l'ambiente pulito
 # descritto in LFS cap. 4.4 (usato dagli stadi 03 e 04).
 as_lfs_user() {
@@ -169,7 +180,9 @@ as_lfs_user() {
     fi
     require_root
     sync_tree
-    exec runuser -u lfs -- env -i \
+    local -a cfg
+    mapfile -t cfg < <(config_env)
+    exec runuser -u lfs -- env -i "${cfg[@]}" \
         HOME=/home/lfs TERM="${TERM:-xterm}" LC_ALL=POSIX \
         LFS="$LFS" LFS_TGT="$LFS_TGT" \
         PATH="$LFS/tools/bin:/usr/bin:/bin" \

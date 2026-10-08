@@ -44,15 +44,34 @@ export_desired() {
     } | sort -u | if [[ -r $deny ]]; then comm -23 - <(sort -u "$deny"); else cat; fi
 }
 
-# Un comando con questo nome esiste già sull'host (fuori dalle nostre esportazioni)?
+# Directory dei comandi dell'host (gestite da pacman): hanno sempre la precedenza
+: "${ARC_HOST_BIN_DIRS:=/usr/bin /usr/sbin /bin /sbin}"
+
+# Un comando con questo nome esiste già sull'host?
 _host_has_cmd() {
     local name=$1 d
-    for d in /usr/bin /usr/sbin /bin /sbin; do
+    for d in $ARC_HOST_BIN_DIRS; do
         [[ -e $d/$name ]] && return 0
     done
-    local own
-    own="$(_exp_bin)/$name"
-    [[ -e $own ]] && ! grep -q "^$ARC_EXPORT_MARK" "$own" 2>/dev/null
+    return 1
+}
+
+# Il percorso di destinazione è già occupato (da un file dell'host o
+# dall'esportazione di un altro pacchetto)? Le esportazioni non si
+# sovrascrivono mai a vicenda: ogni file ha un solo proprietario.
+_dest_taken() { [[ -e $1 || -L $1 ]]; }
+
+# Risolve un percorso del layer seguendo i link simbolici *dentro* il layer
+# (un link assoluto come /usr/bin/x -> /etc/alternatives/x va interpretato
+# rispetto al root Debian, non a quello dell'host). Stampa il percorso host.
+_layer_path() {
+    local p=$1 t i
+    for (( i = 0; i < 16; i++ )); do
+        [[ -L $ARC_DEBIAN_ROOT$p ]] || break
+        t=$(readlink "$ARC_DEBIAN_ROOT$p")
+        if [[ $t == /* ]]; then p=$t; else p="${p%/*}/$t"; fi
+    done
+    printf '%s%s\n' "$ARC_DEBIAN_ROOT" "$p"
 }
 
 _write_bin_wrapper() {
@@ -88,9 +107,7 @@ _export_icons() {
     while IFS= read -r f; do
         rel=${f#"$r"/usr/share/}
         dest="$(_exp_share)/$rel"
-        if [[ -e $dest ]] && ! grep -qxF "$dest" "$ARC_STATEDIR"/exports/*.list 2>/dev/null; then
-            continue
-        fi
+        _dest_taken "$dest" && continue
         install -Dm644 "$f" "$dest"
         printf '%s\n' "$dest"
     done < <(find "$r/usr/share/icons/hicolor" "$r/usr/share/pixmaps" \
@@ -99,7 +116,7 @@ _export_icons() {
 }
 
 export_pkg() {
-    local pkg=$1 r=$ARC_DEBIAN_ROOT rec tmp f name dest icon newicon
+    local pkg=$1 r=$ARC_DEBIAN_ROOT rec tmp f name dest icon newicon real
     local edir
     edir=$(_exp_dir)
     mkdir -p "$edir"
@@ -108,32 +125,42 @@ export_pkg() {
     while IFS= read -r f; do
         case $f in
             /usr/bin/*|/usr/games/*|/bin/*)
-                [[ -f $r$f && -x $r$f ]] || continue
+                real=$(_layer_path "$f")
+                [[ -f $real && -x $real ]] || continue
                 name=${f##*/}
                 dest="$(_exp_bin)/$name"
                 if _host_has_cmd "$name"; then
                     info "$name esiste già sull'host: non esportato (usa 'arc run $name')"
                     continue
                 fi
+                if _dest_taken "$dest"; then
+                    info "$name è già esportato da un altro pacchetto: salto"
+                    continue
+                fi
                 _write_bin_wrapper "$pkg" "$f" "$dest"
                 printf '%s\n' "$dest" >> "$tmp"
                 ;;
             /usr/share/applications/*.desktop)
-                [[ -f $r$f ]] || continue
+                real=$(_layer_path "$f")
+                [[ -f $real ]] || continue
                 dest="$(_exp_apps)/arcbase-deb-${f##*/}"
+                _dest_taken "$dest" && continue
                 mkdir -p "${dest%/*}"
-                icon=$(sed -n 's/^Icon=//p' "$r$f" | head -n1)
+                icon=$(sed -n 's/^Icon=//p' "$real" | head -n1)
                 newicon=
                 if [[ $icon == /* ]]; then
-                    if [[ -f $r$icon ]]; then
-                        newicon="$(_exp_share)/pixmaps/arcbase-deb-${icon##*/}"
-                        install -Dm644 "$r$icon" "$newicon"
+                    icon=$(_layer_path "$icon")
+                    newicon="$(_exp_share)/pixmaps/arcbase-deb-${icon##*/}"
+                    if [[ -f $icon ]] && ! _dest_taken "$newicon"; then
+                        install -Dm644 "$icon" "$newicon"
                         printf '%s\n' "$newicon" >> "$tmp"
+                    elif [[ ! -f $icon ]]; then
+                        newicon=
                     fi
                 else
                     _export_icons "$icon" >> "$tmp"
                 fi
-                _rewrite_desktop "$r$f" "$dest" "$newicon"
+                _rewrite_desktop "$real" "$dest" "$newicon"
                 printf '%s\n' "$dest" >> "$tmp"
                 ;;
         esac
@@ -167,18 +194,46 @@ export_refresh_caches() {
     fi
 }
 
+# Un'esportazione è da rifare se il pacchetto è stato aggiornato dopo
+# l'esportazione (il suo elenco dpkg è più recente) o se uno dei suoi wrapper
+# ora nasconde un comando installato sull'host da pacman.
+_export_stale() {
+    local pkg=$1 rec info f
+    rec="$(_exp_dir)/$pkg.list"
+    info=$ARC_DEBIAN_ROOT/var/lib/dpkg/info
+    for f in "$info/$pkg.list" "$info/$pkg:$(deb_arch).list"; do
+        [[ -e $f && $f -nt $rec ]] && return 0
+    done
+    while IFS= read -r f; do
+        [[ $f == "$(_exp_bin)"/* ]] && _host_has_cmd "${f##*/}" && return 0
+    done < "$rec"
+    return 1
+}
+
 # Allinea le esportazioni ai pacchetti installati nel layer
 export_sync() {
     local p changed=0
     deb_ready || return 0
+    local -a current desired
+    mapfile -t current < <(export_current)
+    mapfile -t desired < <(export_desired)
+    # rimossi o esclusi
     while IFS= read -r p; do
         [[ -n $p ]] || continue
         unexport_pkg "$p"; changed=1
-    done < <(comm -23 <(export_current) <(export_desired))
+    done < <(comm -23 <(printf '%s\n' "${current[@]}" | sed '/^$/d') <(printf '%s\n' "${desired[@]}" | sed '/^$/d'))
+    # aggiornati o in conflitto con l'host
+    while IFS= read -r p; do
+        [[ -n $p ]] || continue
+        if _export_stale "$p"; then
+            unexport_pkg "$p"; export_pkg "$p"; changed=1
+        fi
+    done < <(comm -12 <(printf '%s\n' "${current[@]}" | sed '/^$/d') <(printf '%s\n' "${desired[@]}" | sed '/^$/d'))
+    # nuovi
     while IFS= read -r p; do
         [[ -n $p ]] || continue
         export_pkg "$p"; changed=1
-    done < <(comm -13 <(export_current) <(export_desired))
+    done < <(comm -13 <(printf '%s\n' "${current[@]}" | sed '/^$/d') <(printf '%s\n' "${desired[@]}" | sed '/^$/d'))
     if (( changed )); then export_refresh_caches; fi
 }
 

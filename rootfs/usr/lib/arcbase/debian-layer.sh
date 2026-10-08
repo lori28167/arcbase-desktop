@@ -101,31 +101,37 @@ deb_user_exec() {
         --proc /proc
         --ro-bind /sys /sys
         --bind /tmp /tmp
-        --bind-try /var/tmp /var/tmp
         --tmpfs /run
-        --ro-bind /etc/passwd /etc/passwd
-        --ro-bind /etc/group /etc/group
-        --ro-bind-try /etc/hosts /etc/hosts
-        --ro-bind-try /etc/hostname /etc/hostname
-        --ro-bind-try /etc/machine-id /etc/machine-id
-        --bind-try /home /home
-        --bind-try /media /media
-        --bind-try /mnt /mnt
         --ro-bind-try /run/dbus /run/dbus
         --ro-bind-try /run/systemd/resolve /run/systemd/resolve
         --bind-try /run/media /run/media
-        --ro-bind-try /usr/share/fonts /usr/local/share/fonts
         --setenv ARCBASE_LAYER debian
         --setenv debian_chroot arcbase-debian
         --die-with-parent
     )
+    # Il layer è montato in sola lettura: bwrap non può creare i punti di
+    # montaggio, quindi si monta solo dove la destinazione esiste già.
+    _ubind() {  # _ubind <opzione> <sorgente> <destinazione>
+        [[ -e $2 && -e $r$3 ]] && a+=("$1" "$2" "$3")
+        return 0
+    }
     resolv=$(readlink -f /etc/resolv.conf 2>/dev/null || :)
-    [[ -n $resolv ]] && a+=(--ro-bind-try "$resolv" /etc/resolv.conf)
+    [[ -n $resolv ]] && _ubind --ro-bind "$resolv" /etc/resolv.conf
+    _ubind --ro-bind /etc/passwd /etc/passwd
+    _ubind --ro-bind /etc/group /etc/group
+    _ubind --ro-bind /etc/hosts /etc/hosts
+    _ubind --ro-bind /etc/hostname /etc/hostname
+    _ubind --ro-bind /etc/machine-id /etc/machine-id
+    _ubind --bind /var/tmp /var/tmp
+    _ubind --bind /home /home
+    _ubind --bind /media /media
+    _ubind --bind /mnt /mnt
+    _ubind --ro-bind /usr/share/fonts /usr/local/share/fonts
     if [[ -n ${XDG_RUNTIME_DIR:-} && -d $XDG_RUNTIME_DIR ]]; then
         a+=(--bind "$XDG_RUNTIME_DIR" "$XDG_RUNTIME_DIR")
     fi
     if [[ -n ${HOME:-} && -d $HOME && $HOME != /home/* ]]; then
-        a+=(--bind "$HOME" "$HOME")
+        _ubind --bind "$HOME" "$HOME"
     fi
     # Fuso orario dell'host (/etc/localtime è un link simbolico)
     if [[ -L /etc/localtime ]]; then
@@ -137,6 +143,10 @@ deb_user_exec() {
         /home/*|/tmp/*|/tmp|/media/*|/mnt/*|/run/media/*|"${HOME:-/nonexistent}"*) ;;
         *) dir=${HOME:-/} ;;
     esac
+    # La home fuori da /home è montata solo se esiste un punto di montaggio
+    if [[ -n ${HOME:-} && $HOME != /home/* && $dir == "$HOME"* && ! -e $r$HOME ]]; then
+        dir=/
+    fi
     a+=(--chdir "$dir")
     "$BWRAP" "${a[@]}" -- "$@"
 }
@@ -184,7 +194,9 @@ deb_user_pkgs() {
 }
 
 deb_installed() {
-    deb_installed_pkgs | grep -qxF -- "$1"
+    # Niente "grep -q": con pipefail, l'uscita anticipata di grep fa ricevere
+    # SIGPIPE ai comandi a monte e la pipeline risulterebbe fallita.
+    deb_installed_pkgs | grep -xF -- "$1" >/dev/null
 }
 
 deb_pkg_version() {
@@ -257,7 +269,11 @@ EOF
     rm -f "$r/etc/resolv.conf"
     cp -L /etc/resolv.conf "$r/etc/resolv.conf" 2>/dev/null || : > "$r/etc/resolv.conf"
     # Punti di montaggio usati da deb_user_exec (il layer è in sola lettura)
-    mkdir -p "$r/usr/local/share/fonts" "$r/media" "$r/mnt" "$r/home"
+    mkdir -p "$r/usr/local/share/fonts" "$r/media" "$r/mnt" "$r/home" "$r/var/tmp" "$r/root"
+    local f
+    for f in machine-id hosts hostname passwd group; do
+        [[ -e $r/etc/$f ]] || : > "$r/etc/$f"
+    done
 
     lang=${ARC_LOCALE:-${LANG:-C.UTF-8}}
     if [[ $lang != C.* && $lang != C && $lang != POSIX && -f $r/etc/locale.gen ]]; then

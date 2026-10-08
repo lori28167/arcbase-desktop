@@ -46,8 +46,10 @@ desktop_packages() {
 }
 
 configure_desktop() {
-    local dm
-    dm=$(sed -n 's/^#[[:space:]]*display-manager:[[:space:]]*//p' "$LIST" 2>/dev/null | head -n1)
+    local dm=''
+    if [[ -f $LIST ]]; then
+        dm=$(sed -n 's/^#[[:space:]]*display-manager:[[:space:]]*//p' "$LIST" | head -n1)
+    fi
     systemctl disable systemd-networkd.service systemd-networkd.socket 2>/dev/null || :
     systemctl enable NetworkManager.service
     if [[ -n $dm ]]; then

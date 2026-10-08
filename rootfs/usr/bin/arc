@@ -189,12 +189,12 @@ cmd_remove() {
         if [[ $p == arcbase-base ]]; then
             die "arcbase-base rappresenta il sistema LFS e non può essere rimosso"
         fi
-        if [[ $force != debian ]] && provided_by_base "$p"; then
-            die "$p fa parte del sistema base LFS (arcbase-base) e non può essere rimosso"
-        elif [[ $force != debian ]] && $PACMAN -Qq -- "$p" >/dev/null 2>&1; then
+        if [[ $force != debian ]] && $PACMAN -Qq -- "$p" >/dev/null 2>&1; then
             arch+=("$p")
         elif [[ $force != arch ]] && deb_ready && deb_installed "$p"; then
             deb+=("$p")
+        elif [[ $force != debian ]] && provided_by_base "$p"; then
+            die "$p fa parte del sistema base LFS (arcbase-base) e non può essere rimosso"
         else
             missing+=("$p")
         fi
@@ -295,12 +295,14 @@ cmd_origin() {
     local p
     (( $# )) || die "uso: arc origin <pacchetto>..."
     for p; do
-        if [[ $p == arcbase-base ]] || provided_by_base "$p"; then
-            echo "$p: sistema base LFS (compilato da sorgente, arcbase-base)"
+        if [[ $p == arcbase-base ]]; then
+            echo "$p: sistema base LFS (compilato da sorgente)"
         elif $PACMAN -Qq -- "$p" >/dev/null 2>&1; then
             echo "$p: installato da Arch Linux (pacman)"
         elif deb_ready && deb_installed "$p"; then
             echo "$p: installato nel layer Debian (apt)"
+        elif provided_by_base "$p"; then
+            echo "$p: sistema base LFS (compilato da sorgente, arcbase-base)"
         else
             case $(resolve_backend "$p") in
                 arch)   echo "$p: non installato, disponibile in Arch Linux" ;;
@@ -343,6 +345,8 @@ cmd_deb() {
 }
 
 cmd_export() {
+    # Senza argomenti (anche dall'hook ALPM) e senza layer non c'è nulla da fare
+    if (( ! $# )) && ! deb_ready; then return 0; fi
     require_root
     deb_require
     if (( $# )); then export_force "$@"; else export_sync; fi
