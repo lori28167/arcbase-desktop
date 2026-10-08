@@ -1,0 +1,63 @@
+#!/bin/bash
+# =============================================================================
+#  Arcbase Desktop — /init dell'initramfs della ISO live
+#
+#  1. cerca il supporto con l'etichetta ARCBASE_LIVE (CD, USB, disco virtuale)
+#  2. monta arcbase/rootfs.sfs (squashfs) in sola lettura
+#  3. sovrappone un tmpfs scrivibile con overlayfs e vi copia arcbase/live/
+#     (utente live, login automatico, launcher dell'installer)
+#  4. passa il controllo a systemd con switch_root
+#  Tutto il necessario (iso9660, squashfs, overlay, loop, sr) è nel kernel.
+#  Il supporto resta montato in /run/arcbase/medium: Calamares installa
+#  copiando /run/arcbase/medium/arcbase/rootfs.sfs, cioè il sistema pulito.
+# =============================================================================
+export PATH=/usr/bin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+exec </dev/console >/dev/console 2>&1
+
+label=ARCBASE_LIVE timeout=30 init=/usr/lib/systemd/systemd
+for arg in $(< /proc/cmdline); do
+    case $arg in
+        arcbase.label=*)   label=${arg#*=} ;;
+        arcbase.timeout=*) timeout=${arg#*=} ;;
+        arcbase.shell)     echo "arcbase: shell richiesta da riga di comando"; bash ;;
+    esac
+done
+
+rescue() {
+    echo
+    echo "arcbase live: $*"
+    echo "Si apre una shell di emergenza (exit per riprovare l'avvio)."
+    bash
+}
+
+echo ":: Arcbase Desktop live — ricerca del supporto '$label'"
+dev=''
+for (( i = 0; i < timeout; i++ )); do
+    dev=$(blkid -L "$label" 2>/dev/null) && [[ -b $dev ]] && break
+    dev=''
+    sleep 1
+done
+[[ -n $dev ]] || rescue "supporto con etichetta $label non trovato"
+
+mount -t tmpfs -o mode=0755 tmpfs /run
+mkdir -p /run/arcbase/{medium,rootfs,rw/upper,rw/work} /newroot
+mount -o ro "$dev" /run/arcbase/medium || rescue "impossibile montare $dev"
+sfs=/run/arcbase/medium/arcbase/rootfs.sfs
+[[ -f $sfs ]] || rescue "$sfs mancante"
+mount -t squashfs -o ro,loop "$sfs" /run/arcbase/rootfs || rescue "impossibile montare $sfs"
+mount -t overlay overlay \
+    -o lowerdir=/run/arcbase/rootfs,upperdir=/run/arcbase/rw/upper,workdir=/run/arcbase/rw/work \
+    /newroot || rescue "overlayfs non disponibile"
+
+# Configurazione della sessione live (solo in RAM, mai nel sistema installato)
+if [[ -d /run/arcbase/medium/arcbase/live ]]; then
+    cp -a /run/arcbase/medium/arcbase/live/. /newroot/
+fi
+
+echo ":: avvio di systemd"
+# switch_root sposta /dev, /proc, /sys e /run (con il supporto montato) nel nuovo root
+exec switch_root /newroot "$init"

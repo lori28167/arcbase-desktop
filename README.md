@@ -144,7 +144,7 @@ sudo mkdir -p /mnt/lfs && sudo mount /dev/sdb1 /mnt/lfs
 # 2. (facoltativo) personalizzazione
 cp config/arcbase.conf config/local.conf   # e modifica solo ciò che serve
 
-# 3. build completa
+# 3. build completa: produce la ISO di installazione in out/
 sudo make all
 ```
 
@@ -165,12 +165,46 @@ rilanciarlo, i pacchetti già compilati vengono saltati):
 | `sudo make kernel` | kernel + GRUB BIOS/UEFI | LFS 10 |
 | `sudo make package-managers` | pacman, `arcbase-base`, portachiavi, layer apt | BLFS |
 | `sudo make desktop` | desktop dai repository Arch, layer Debian | — |
-| `sudo make image` | immagine disco avviabile in `out/` | — |
+| `sudo make iso` | **ISO di installazione** (sessione live + Calamares) in `out/` | — |
+| `sudo make image` | in alternativa: immagine disco già installata in `out/` | — |
 
 I log di ogni pacchetto sono in `$LFS/sources/.arcbase-logs/`. `sudo make enter` apre
 una shell nel chroot, `sudo make umount` smonta i file system virtuali.
 
-### Avviare l'immagine
+### La ISO di installazione
+
+`make iso` (incluso in `make all`) crea `out/arcbase-desktop-1.0-x86_64.iso`, circa
+3 GB, ibrida **BIOS + UEFI**, avviabile da CD/DVD, chiavetta USB o macchina virtuale:
+
+- all'avvio parte una **sessione live** (utente `live`, login automatico) che gira in
+  RAM: il sistema è una squashfs in sola lettura con sopra un overlay in memoria;
+- sul desktop c'è **"Installa Arcbase Desktop"**, che apre **Calamares** con il
+  branding di Arcbase: lingua, tastiera, partizionamento (anche automatico, GPT con
+  partizione EFI), utente e password, poi copia il sistema e installa GRUB;
+- Calamares installa la squashfs, cioè il sistema pulito: le modifiche della sessione
+  live non finiscono sul disco, l'utente e le password di default della build vengono
+  rimossi e l'installer si disinstalla da solo a fine installazione.
+
+Calamares è compilato da sorgente durante la build, con le dipendenze (Qt 6, KPMcore…)
+dai repository Arch. L'initramfs della ISO è minimale (`arcbase-mkinitramfs-live`):
+iso9660, squashfs, overlayfs e loop sono compilati nel kernel.
+
+**Proxmox VE:** carica la ISO in uno storage di tipo *ISO image* e crea una VM con
+
+| Impostazione | Valore |
+|---|---|
+| BIOS | SeaBIOS oppure OVMF (UEFI, con disco EFI); entrambi supportati |
+| Macchina | q35 |
+| CPU | tipo `host`, 2 o più core |
+| Memoria | 4 GB o più (la sessione live gira in RAM) |
+| Disco | 32 GB o più, VirtIO SCSI (single) |
+| Display | VirtIO-GPU oppure Standard VGA |
+| Rete | VirtIO |
+
+Con OVMF disattiva il Secure Boot nel firmware della VM (tasto Esc all'avvio, *Device
+Manager → Secure Boot Configuration*), perché Arcbase non è firmato.
+
+### Avviare l'immagine (alternativa alla ISO)
 
 ```bash
 # QEMU con UEFI e accelerazione 3D
@@ -186,9 +220,9 @@ Per installare su una partizione reale invece che su un'immagine, dopo aver copi
 sistema si usa `arcbase-bootloader --disk /dev/sdX --root /dev/sdX3 --esp /dev/sdX2`
 (senza `efibootmgr` GRUB viene installato nel percorso UEFI di fallback `\EFI\BOOT`).
 
-Credenziali iniziali: utente `arc` / password `arcbase` (anche per root).
+Credenziali dell'immagine `.img`: utente `arc` / password `arcbase` (anche per root).
 **Cambiale al primo accesso** con `passwd`, oppure impostale prima della build in
-`config/local.conf`.
+`config/local.conf`. Con la ISO non servono: utente e password si scelgono in Calamares.
 
 ## Configurazione
 
@@ -254,14 +288,18 @@ config/
   arch-provides.map          nomi Arch forniti dal base LFS
   kernel/arcbase.config      frammento di configurazione del kernel
   desktop/*.list             pacchetti di KDE, GNOME, Xfce
+  calamares/                 installer: sequenza, moduli, branding, PKGBUILD
+  live/                      sessione live della ISO (utente, autologin, launcher)
 scripts/
   lib/common.sh              motore di build (ricette, stamp, log, dry-run)
-  00…05, 12                  stadi eseguiti sull'host
-  chroot/06…11               stadi eseguiti nel chroot
+  00…05, 12, 13              stadi eseguiti sull'host (13 = ISO)
+  chroot/06…12               stadi eseguiti nel chroot (12 = Calamares + ISO)
 rootfs/                      file installati nel sistema
   usr/bin/arc                CLI unificata (+ link apt, dpkg…)
   usr/lib/arcbase/           layer Debian ed esportazione delle app
-  usr/bin/arcbase-*          mkbase, runtime-sync, abi-check, bootloader
+  usr/bin/arcbase-*          mkbase, runtime-sync, abi-check, bootloader,
+                             mkinitramfs-live, postinstall (Calamares)
+  usr/lib/arcbase/live-init  /init dell'initramfs della ISO
   usr/share/libalpm/hooks/   hook ALPM (systemd, controllo ABI)
   etc/pam.d, etc/profile…    configurazione di sistema
 tests/                       test senza root né rete
@@ -271,12 +309,17 @@ tests/                       test senza root né rete
 
 ```bash
 make lint    # shellcheck su tutti gli script
-make test    # 3 suite:
+make test    # 4 suite:
              #  - test-recipes: ogni stadio ha tutte le ricette e i sorgenti (dry run)
              #  - test-build-engine: estrazione, errexit, stamp, log
              #  - test-arc: arc con pacman/bubblewrap/apt simulati (installazione
              #    mista, esportazione app, shim apt/dpkg, deb init, arcbase-mkbase,
              #    runtime-sync, abi-check)
+             #  - test-iso: initramfs reale, coerenza ISO/initramfs/Calamares,
+             #    configurazione e branding di Calamares, sessione live
+sudo make test-live-boot
+             # avvia davvero l'init dell'initramfs come PID 1 in un namespace,
+             # su una mini-ISO: overlay, squashfs, sessione live, switch_root
 ```
 
 La CI su GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) esegue
@@ -284,6 +327,9 @@ lint e test ad ogni push.
 
 ## Limiti noti
 
+- **ISO e Calamares** sono verificati con test automatici (initramfs avviato in un
+  namespace, configurazione di Calamares), ma l'installazione completa va provata su
+  una VM reale dopo la prima build.
 - **Solo x86_64.** Niente Secure Boot e niente initramfs: la root non può essere
   cifrata (LUKS) e i driver di avvio sono compilati nel kernel.
 - **Kernel compilato da sorgente**: moduli esterni come i driver NVIDIA proprietari o

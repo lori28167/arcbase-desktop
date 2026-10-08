@@ -1,0 +1,35 @@
+# Arcbase Desktop — PKGBUILD di Calamares (generato dallo stadio 12)
+# Dipendenze dai repository Arch; il sorgente è quello scaricato da make download.
+pkgname=calamares
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Installer di sistema (Arcbase Desktop)"
+arch=('x86_64')
+url="https://calamares.io"
+license=('GPL-3.0-or-later')
+depends=('kpmcore' 'qt6-base' 'qt6-declarative' 'qt6-svg' 'yaml-cpp' 'kcoreaddons'
+         'kconfig' 'ki18n' 'solid' 'polkit-qt6' 'libpwquality' 'icu' 'python'
+         'rsync' 'squashfs-tools' 'dosfstools' 'efibootmgr' 'gptfdisk')
+makedepends=('cmake' 'extra-cmake-modules' 'qt6-tools')
+source=("calamares-$pkgver.tar.gz")
+sha256sums=('SKIP')
+options=('!debug')
+
+build() {
+    cmake -S "calamares-$pkgver" -B build -G Ninja \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DWITH_QT6=ON \
+        -DINSTALL_CONFIG=OFF \
+        -DBUILD_TESTING=OFF \
+        -DSKIP_MODULES="dracut dracutlukscfg dummycpp dummyprocess dummypython dummypythonqt \
+initcpio initcpiocfg initramfs initramfscfg luksbootkeyfile luksopenswaphookcfg mkinitfs \
+openrcdmcryptcfg plymouthcfg plasmalnf services-openrc tracking webview zfs zfshostid \
+packagechooser packagechooserq netinstall packages"
+    cmake --build build
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install build
+}

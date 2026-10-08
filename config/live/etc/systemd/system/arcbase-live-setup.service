@@ -1,0 +1,13 @@
+# Arcbase Desktop — preparazione della sessione live (solo sulla ISO)
+[Unit]
+Description=Preparazione della sessione live di Arcbase Desktop
+Before=display-manager.service systemd-user-sessions.service
+After=systemd-sysusers.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/arcbase-live-setup
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

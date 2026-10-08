@@ -1,0 +1,54 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-postinstall — passi di Calamares specifici di Arcbase
+#
+#  Eseguito da Calamares (modulo shellprocess) dentro il sistema installato:
+#    arcbase-postinstall pre    subito dopo la copia del sistema
+#    arcbase-postinstall post   alla fine (lingua, bootloader, pulizia)
+# =============================================================================
+set -o nounset -o pipefail
+
+log() { echo "arcbase-postinstall: $*"; }
+
+pre() {
+    # L'utente e le password di default della build non servono: l'utente
+    # vero viene creato da Calamares (modulo users), che imposta anche root.
+    local u
+    u=$(cat /etc/arcbase/build-user 2>/dev/null || :)
+    if [[ -n $u ]] && id "$u" >/dev/null 2>&1; then
+        log "rimozione dell'utente di build '$u'"
+        userdel -r "$u" 2>/dev/null || userdel "$u"
+    fi
+    rm -f /etc/arcbase/build-user
+    passwd -l root >/dev/null 2>&1 || :
+    return 0
+}
+
+post() {
+    local rc=0
+    # Locale scelta in Calamares (localedef funziona con la glibc LFS e con quella Arch)
+    if [[ -r /etc/locale.conf ]]; then
+        # shellcheck source=/dev/null
+        . /etc/locale.conf
+        if [[ -n ${LANG:-} && $LANG != C* ]]; then
+            log "generazione della locale $LANG"
+            localedef -i "${LANG%%.*}" -f UTF-8 "$LANG" || log "localedef fallito per $LANG"
+        fi
+    fi
+
+    log "installazione di GRUB"
+    arcbase-bootloader --auto --no-fstab || rc=1
+
+    log "rimozione dell'installer"
+    if pacman -Q calamares >/dev/null 2>&1; then
+        pacman -Rns --noconfirm calamares || log "rimozione di calamares fallita (non bloccante)"
+    fi
+    rm -rf /etc/calamares /usr/share/calamares/branding/arcbase
+    return $rc
+}
+
+case ${1:-} in
+    pre)  pre ;;
+    post) post ;;
+    *) echo "uso: $0 pre|post" >&2; exit 2 ;;
+esac

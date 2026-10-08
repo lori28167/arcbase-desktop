@@ -1,0 +1,38 @@
+# Arcbase Desktop — branding di Calamares (generato dallo stadio 12)
+---
+componentName: arcbase
+
+welcomeStyleCalamares: false
+welcomeExpandingLogo: true
+windowExpanding: normal
+windowSize: 960px,640px
+windowPlacement: center
+sidebar: widget
+navigation: widget
+
+strings:
+    productName:         "@NAME@"
+    shortProductName:    "Arcbase"
+    version:             "@VERSION@"
+    shortVersion:        "@VERSION@"
+    versionedName:       "@NAME@ @VERSION@"
+    shortVersionedName:  "Arcbase @VERSION@"
+    bootloaderEntryName: "Arcbase"
+    productUrl:          "@URL@"
+    supportUrl:          "@URL@/issues"
+    knownIssuesUrl:      "@URL@#limiti-noti"
+    releaseNotesUrl:     "@URL@/releases"
+
+images:
+    productLogo:    "logo.svg"
+    productIcon:    "logo.svg"
+    productWelcome: "welcome.svg"
+
+slideshow:    "show.qml"
+slideshowAPI: 2
+
+style:
+    SidebarBackground:        "#16202c"
+    SidebarText:              "#e6edf3"
+    SidebarTextCurrent:       "#ffffff"
+    SidebarBackgroundCurrent: "#1793d1"

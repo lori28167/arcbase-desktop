@@ -1,0 +1,45 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-mkinitramfs-live — crea l'initramfs della ISO live
+#
+#  Uso: arcbase-mkinitramfs-live <file-di-uscita>
+#
+#  Contiene solo bash, gli strumenti di util-linux necessari e le loro
+#  librerie (copiate seguendo ldd): i driver sono tutti nel kernel, quindi
+#  non servono moduli né udev. Lo script di avvio è /usr/lib/arcbase/live-init.
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+out=${1:?uso: arcbase-mkinitramfs-live <file-di-uscita>}
+INIT=${ARC_LIVE_INIT:-/usr/lib/arcbase/live-init}
+TOOLS=(bash mount umount switch_root blkid mkdir cp sleep cat ls ln mountpoint)
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work"/{usr/bin,usr/lib,dev,proc,sys,run,newroot,etc,tmp}
+ln -s usr/bin "$work/bin"
+ln -s usr/bin "$work/sbin"
+ln -s usr/lib "$work/lib"
+ln -s usr/lib "$work/lib64"
+
+copy_lib() {
+    local lib=$1
+    [[ -e $work/usr/lib/${lib##*/} ]] && return 0
+    cp -L "$lib" "$work/usr/lib/${lib##*/}"
+}
+
+for t in "${TOOLS[@]}"; do
+    bin=$(command -v "$t") || { echo "arcbase-mkinitramfs-live: $t non trovato" >&2; exit 1; }
+    cp -L "$bin" "$work/usr/bin/$t"
+    # librerie dinamiche ("=> /percorso") e interprete ("/lib64/ld-linux...")
+    while read -r lib; do
+        copy_lib "$lib"
+    done < <(ldd "$bin" 2>/dev/null | awk '/=> \// { print $3 } /^[[:space:]]*\// { print $1 }')
+done
+
+install -m755 "$INIT" "$work/init"
+mknod -m 600 "$work/dev/console" c 5 1 2>/dev/null || :
+mknod -m 666 "$work/dev/null" c 1 3 2>/dev/null || :
+
+(cd "$work" && find . -print0 | cpio --null -o -H newc --quiet) | gzip -9 > "$out"
+echo "initramfs creato: $out ($(du -h "$out" | cut -f1))"

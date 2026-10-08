@@ -12,7 +12,7 @@ trap 'rm -rf "$T"' EXIT
 fail=0 total=0
 for s in 03-cross-toolchain.sh 04-temp-tools.sh chroot/06-chroot-tools.sh \
          chroot/07-base-system.sh chroot/08-system-config.sh chroot/09-kernel-boot.sh \
-         chroot/10-package-managers.sh chroot/11-desktop.sh; do
+         chroot/10-package-managers.sh chroot/11-desktop.sh chroot/12-live-iso.sh; do
     if out=$(ARCBASE_DRY_RUN=1 LFS="$T" "$REPO/scripts/$s" 2>&1); then
         n=$(grep -cE '^(build|step) ' <<<"$out")
         total=$((total + n))

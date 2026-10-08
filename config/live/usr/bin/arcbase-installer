@@ -1,0 +1,3 @@
+#!/bin/sh
+# Avvia Calamares come root mantenendo l'accesso al display (X11 o Wayland)
+exec sudo -E calamares "$@"

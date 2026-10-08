@@ -9,9 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Installa shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Installa gli strumenti
+        run: sudo apt-get update && sudo apt-get install -y shellcheck cpio squashfs-tools xorriso python3-yaml
       - name: Lint
         run: make lint
       - name: Test (ricette, motore di build, arc)
         run: make test
+      - name: Avvio dell'initramfs della ISO live
+        run: sudo tests/test-live-boot.sh

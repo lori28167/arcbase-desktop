@@ -12,7 +12,7 @@ S     := scripts
 
 .PHONY: help all check prepare download toolchain temp-tools chroot-tools \
         base-system merge-usr config kernel package-managers desktop image \
-        enter umount lint test clean-stamps
+        iso enter umount lint test test-live-boot clean-stamps
 
 help:
 	@echo "Arcbase Desktop — LFS + pacman (Arch) + apt (Debian)"
@@ -30,16 +30,18 @@ help:
 	@echo "  kernel            LFS cap. 10: kernel + GRUB BIOS/UEFI"
 	@echo "  package-managers  pacman, arcbase-base, layer apt/dpkg, arc"
 	@echo "  desktop           desktop (\$$ARC_DESKTOP) dai repository Arch + layer Debian"
-	@echo "  image             immagine disco avviabile in out/"
+	@echo "  iso               ISO di installazione (live + Calamares) in out/"
+	@echo "  image             (alternativa) immagine disco già installata in out/"
 	@echo
 	@echo "Altro:"
 	@echo "  all               tutti gli stadi in sequenza"
 	@echo "  enter             shell nel chroot   |  umount  smonta il chroot"
-	@echo "  lint / test       shellcheck e test di 'arc' (non richiedono root)"
+	@echo "  lint / test       shellcheck e test (non richiedono root)"
+	@echo "  test-live-boot    avvio reale dell'initramfs della ISO (richiede root)"
 	@echo "  clean-stamps      forza la ricompilazione di tutto"
 
 all: check prepare download toolchain temp-tools chroot-tools base-system \
-     merge-usr config kernel package-managers desktop image
+     merge-usr config kernel package-managers desktop iso
 
 check:
 	$(S)/00-host-check.sh
@@ -77,6 +79,9 @@ package-managers:
 desktop:
 	$(S)/05-chroot.sh run 11-desktop.sh
 
+iso:
+	$(S)/13-iso.sh
+
 image:
 	$(S)/12-image.sh
 
@@ -89,13 +94,19 @@ umount:
 lint:
 	shellcheck -x $(S)/*.sh $(S)/lib/common.sh $(S)/chroot/*.sh \
 	    rootfs/usr/bin/arc rootfs/usr/bin/arcbase-* \
-	    rootfs/usr/lib/arcbase/*.sh rootfs/usr/share/libalpm/scripts/* \
+	    rootfs/usr/lib/arcbase/*.sh rootfs/usr/lib/arcbase/live-init \
+	    rootfs/usr/share/libalpm/scripts/* config/live/usr/bin/* \
 	    tests/*.sh
 
 test:
 	tests/test-recipes.sh
 	tests/test-build-engine.sh
 	tests/test-arc.sh
+	tests/test-iso.sh
+
+# Avvio reale dell'initramfs live in un namespace (richiede root)
+test-live-boot:
+	tests/test-live-boot.sh
 
 clean-stamps:
 	@source config/arcbase.conf && rm -rfv "$$LFS/sources/.arcbase-stamps"

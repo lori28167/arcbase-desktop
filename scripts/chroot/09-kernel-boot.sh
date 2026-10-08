@@ -22,7 +22,9 @@ build_linux() {
     # Controllo: le opzioni essenziali devono essere attive
     local opt
     for opt in DEVTMPFS CGROUPS USER_NS EXT4_FS EFI_STUB BLK_DEV_NVME SATA_AHCI \
-               VIRTIO_BLK USB_STORAGE USB_UAS USB_XHCI_HCD MMC_BLOCK DRM; do
+               VIRTIO_BLK USB_STORAGE USB_UAS USB_XHCI_HCD MMC_BLOCK DRM \
+               BLK_DEV_INITRD RD_GZIP BLK_DEV_LOOP BLK_DEV_SR ISO9660_FS SQUASHFS \
+               SQUASHFS_ZSTD OVERLAY_FS; do
         grep -q "^CONFIG_$opt=y" .config || { echo "CONFIG_$opt non attiva"; exit 1; }
     done
     make

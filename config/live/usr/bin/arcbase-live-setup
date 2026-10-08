@@ -1,0 +1,52 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-live-setup — configura la sessione live (eseguito a ogni avvio
+#  della ISO, nel tmpfs: niente di questo finisce nel sistema installato)
+# =============================================================================
+set -o nounset
+
+LIVE=live
+hostname arcbase-live 2>/dev/null || :
+echo arcbase-live > /etc/hostname
+
+getent group autologin >/dev/null || groupadd -r autologin
+if ! id "$LIVE" >/dev/null 2>&1; then
+    useradd -m -c "Arcbase Live" -s /bin/bash \
+        -G wheel,audio,video,input,render,users,autologin "$LIVE"
+fi
+passwd -d "$LIVE" >/dev/null
+echo "$LIVE ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/90-arcbase-live
+chmod 440 /etc/sudoers.d/90-arcbase-live
+
+# Login automatico per tutti i display manager supportati
+# Sessione: Plasma se c'è, altrimenti la prima sessione Wayland o X11 trovata
+session=''
+for f in /usr/share/wayland-sessions/plasma.desktop /usr/share/wayland-sessions/*.desktop \
+         /usr/share/xsessions/*.desktop; do
+    if [[ -e $f ]]; then session=$(basename "$f" .desktop); break; fi
+done
+mkdir -p /etc/sddm.conf.d
+cat > /etc/sddm.conf.d/90-arcbase-live.conf <<CONF
+[Autologin]
+User=$LIVE
+Session=${session:-plasma}
+Relogin=false
+CONF
+mkdir -p /etc/gdm
+cat > /etc/gdm/custom.conf <<CONF
+[daemon]
+AutomaticLoginEnable=True
+AutomaticLogin=$LIVE
+CONF
+mkdir -p /etc/lightdm/lightdm.conf.d
+cat > /etc/lightdm/lightdm.conf.d/90-arcbase-live.conf <<CONF
+[Seat:*]
+autologin-user=$LIVE
+autologin-session=${session:-xfce}
+CONF
+
+# Installer sul desktop
+home=$(getent passwd "$LIVE" | cut -d: -f6)
+install -d -o "$LIVE" -g "$LIVE" "$home/Desktop"
+install -m755 -o "$LIVE" -g "$LIVE" /usr/share/applications/arcbase-installer.desktop "$home/Desktop/"
+exit 0

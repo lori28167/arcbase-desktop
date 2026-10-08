@@ -83,6 +83,8 @@ users() {
         useradd -m -c "$ARC_USER_FULLNAME" -G wheel,audio,video,input,render,users "$ARC_USER"
     fi
     echo "$ARC_USER:$ARC_USER_PASSWORD" | chpasswd
+    # L'installer Calamares rimuove questo utente dal sistema installato
+    echo "$ARC_USER" > /etc/arcbase/build-user
 }
 
 services() {

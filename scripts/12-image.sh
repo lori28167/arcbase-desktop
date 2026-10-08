@@ -59,7 +59,7 @@ mount "${LOOP}p2" "$MNT/boot/efi"
 
 msg "Copia del sistema"
 tar -C "$LFS" -cpf - \
-    --exclude=./sources --exclude=./arcbase --exclude=./tools \
+    --exclude=./sources --exclude=./arcbase --exclude=./arcbase-iso --exclude=./tools \
     --exclude=./lost+found --exclude='./proc/*' --exclude='./sys/*' \
     --exclude='./dev/*' --exclude='./run/*' --exclude='./tmp/*' \
     --xattrs --acls --numeric-owner . \

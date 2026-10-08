@@ -4,15 +4,20 @@
 #
 #  Uso (dentro il sistema Arcbase o in un chroot con /dev montato):
 #    arcbase-bootloader --disk /dev/sdX --root /dev/sdX3 [--esp /dev/sdX2]
-#                       [--removable] [--no-bios] [--cmdline "quiet ..."]
+#                       [--removable] [--no-bios] [--no-fstab] [--cmdline "quiet ..."]
+#    arcbase-bootloader --auto [--no-fstab]
+#        rileva root, disco ed ESP dai punti di montaggio correnti (usato
+#        dall'installer Calamares dentro il sistema di destinazione)
 #
 #  Arcbase non usa initramfs: il kernel monta / tramite root=PARTUUID=...
 # =============================================================================
 set -o errexit -o nounset -o pipefail
 
-disk='' root='' esp='' removable=0 bios=1 cmdline='quiet'
+disk='' root='' esp='' removable=0 bios=1 cmdline='quiet' auto=0 fstab=1
 while (( $# )); do
     case $1 in
+        --auto) auto=1 ;;
+        --no-fstab) fstab=0 ;;
         --disk) disk=$2; shift ;;
         --root) root=$2; shift ;;
         --esp)  esp=$2; shift ;;
@@ -23,6 +28,12 @@ while (( $# )); do
     esac
     shift
 done
+if (( auto )); then
+    root=$(findmnt -n -o SOURCE /)
+    root=${root%%\[*}                       # btrfs: /dev/sda2[/@] -> /dev/sda2
+    disk=/dev/$(lsblk -no PKNAME "$root" | head -n1)
+    esp=$(findmnt -n -o SOURCE /boot/efi 2>/dev/null || :)
+fi
 [[ -b $disk && -b $root ]] || { echo "uso: $0 --disk <disco> --root <partizione> [--esp <partizione>]" >&2; exit 2; }
 
 uuid()     { blkid -s UUID     -o value "$1"; }
@@ -37,22 +48,26 @@ ROOT_FS=$(fstype "$root")
 kernel=$(find /boot -maxdepth 1 -name 'vmlinuz-*' -printf '%f\n' | sort -V | tail -n1)
 [[ -n $kernel ]] || { echo "nessun kernel in /boot" >&2; exit 1; }
 
-echo "==> /etc/fstab"
-{
-    echo "# Arcbase Desktop — /etc/fstab (generato da arcbase-bootloader)"
-    echo "# <file system>                           <mount>    <tipo>  <opzioni>        <dump> <fsck>"
-    printf 'UUID=%-40s /          %-7s defaults         1      1\n' "$ROOT_UUID" "$ROOT_FS"
-    if [[ -n $esp ]]; then
-        printf 'UUID=%-40s /boot/efi  vfat    umask=0077       0      2\n' "$(uuid "$esp")"
-    fi
-} > /etc/fstab
+if (( fstab )); then
+    echo "==> /etc/fstab"
+    {
+        echo "# Arcbase Desktop — /etc/fstab (generato da arcbase-bootloader)"
+        echo "# <file system>                           <mount>    <tipo>  <opzioni>        <dump> <fsck>"
+        printf 'UUID=%-40s /          %-7s defaults         1      1\n' "$ROOT_UUID" "$ROOT_FS"
+        if [[ -n $esp ]]; then
+            printf 'UUID=%-40s /boot/efi  vfat    umask=0077       0      2\n' "$(uuid "$esp")"
+        fi
+    } > /etc/fstab
+fi
 
 if [[ -n $esp ]]; then
     mkdir -p /boot/efi
     mountpoint -q /boot/efi || mount "$esp" /boot/efi
     echo "==> GRUB UEFI (x86_64-efi)"
-    if (( ! removable )) && command -v efibootmgr >/dev/null 2>&1; then
+    if (( ! removable )) && command -v efibootmgr >/dev/null 2>&1 && [[ -d /sys/firmware/efi/efivars ]]; then
         grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=arcbase
+        # copia anche nel percorso di fallback: avvio garantito se la NVRAM si perde
+        grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram
     else
         # Senza efibootmgr non si può scrivere la voce NVRAM: si usa il percorso
         # di fallback \EFI\BOOT\BOOTX64.EFI, che ogni firmware UEFI avvia.

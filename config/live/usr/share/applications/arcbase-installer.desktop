@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Installa Arcbase Desktop
+Name[en]=Install Arcbase Desktop
+Comment=Installa Arcbase Desktop su questo computer
+Exec=/usr/bin/arcbase-installer
+Icon=calamares
+Terminal=false
+Categories=System;
