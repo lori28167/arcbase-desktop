@@ -168,6 +168,7 @@ rilanciarlo, i pacchetti già compilati vengono saltati):
 | `sudo make image` | immagine disco avviabile in `out/` | — |
 | `sudo make iso` | ISO live ibrida (BIOS + UEFI, CD/USB) in `out/` | — |
 | `make iso-test` | avvia la ISO in QEMU (BIOS e UEFI) fino al login | — |
+| `make install-test` | installa dalla ISO su un disco virtuale e lo riavvia | — |
 
 I log di ogni pacchetto sono in `$LFS/sources/.arcbase-logs/`. `sudo make enter` apre
 una shell nel chroot, `sudo make umount` smonta i file system virtuali.
@@ -178,16 +179,16 @@ una shell nel chroot, `sudo make umount` smonta i file system virtuali.
 # QEMU con UEFI e accelerazione 3D
 qemu-system-x86_64 -enable-kvm -m 4G -smp 4 -cpu host \
     -bios /usr/share/ovmf/OVMF.fd -device virtio-vga-gl -display gtk,gl=on \
-    -drive file=out/arcbase-desktop-1.0-x86_64.img,format=raw,if=virtio
+    -drive file=out/arcbase-desktop-1.1-x86_64.img,format=raw,if=virtio
 
 # chiavetta USB (cancella /dev/sdX!)
-sudo dd if=out/arcbase-desktop-1.0-x86_64.img of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=out/arcbase-desktop-1.1-x86_64.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ### ISO live
 
 `sudo make iso` (dopo gli stadi fino a `desktop`) crea
-`out/arcbase-desktop-1.0-x86_64.iso`, avviabile da CD/DVD o, scritta con `dd`, da
+`out/arcbase-desktop-1.1-x86_64.iso`, avviabile da CD/DVD o, scritta con `dd`, da
 chiavetta USB, sia in BIOS sia in UEFI. Il sistema è compresso in uno squashfs
 (`/arcbase/rootfs.sfs`) e all'avvio diventa un overlay con le modifiche in RAM. È
 l'unico caso in cui Arcbase usa un initramfs: uno minimale (bash, mount, blkid,
@@ -200,15 +201,56 @@ sudo make iso
 make iso-test          # QEMU senza display: GRUB → kernel → systemd → login,
                        # con BIOS e (se c'è OVMF) UEFI; salva out/iso-test-*.ppm
 qemu-system-x86_64 -enable-kvm -m 4G -smp 4 -cpu host \
-    -cdrom out/arcbase-desktop-1.0-x86_64.iso
+    -cdrom out/arcbase-desktop-1.1-x86_64.iso
 ```
 
 La voce di GRUB "shell di debug nell'initramfs" ferma l'avvio con la root live già
 montata in `/new_root`.
 
+### Installare su disco
+
+Dalla sessione live si avvia l'installer con l'icona **Installa Arcbase Desktop**
+sulla scrivania (o nel menu), oppure da terminale con `sudo arcbase-install`. Chiede
+disco, nome del computer, utente, password, fuso orario e tastiera (default `us`),
+poi **cancella il disco scelto** e crea:
+
+| Partizione | Dimensione | Uso |
+|---|---|---|
+| BIOS boot | 1 MiB | GRUB per BIOS |
+| ESP (FAT32) | 512 MiB | GRUB per UEFI, montata su `/boot/efi` |
+| root (ext4) | resto del disco | il sistema |
+
+Il sistema viene copiato dallo squashfs della ISO (le modifiche fatte nella sessione
+live non vengono copiate) e GRUB è installato sia per BIOS sia per UEFI. Per
+un'installazione non interattiva:
+
+```bash
+sudo arcbase-install --disk /dev/sdX --yes --hostname pc --user mario \
+    --fullname "Mario Rossi" --password '…' --timezone Europe/Rome --keymap it
+```
+
+Senza `--root-password` l'account root resta bloccato e si amministra con `sudo`.
+`make install-test` prova tutto in QEMU: installa su un disco virtuale vuoto (BIOS e
+UEFI), riavvia dal disco e verifica utente, nome host e stato di systemd.
+
 Per installare su una partizione reale invece che su un'immagine, dopo aver copiato il
 sistema si usa `arcbase-bootloader --disk /dev/sdX --root /dev/sdX3 --esp /dev/sdX2`
 (senza `efibootmgr` GRUB viene installato nel percorso UEFI di fallback `\EFI\BOOT`).
+
+### Kernel aggiornati (mirror)
+
+Il kernel della build resta fisso, ma un server di casa può compilare, provare in QEMU
+e pubblicare da solo l'ultimo kernel stabile (`linux-arcbase`) e l'ultimo LTS
+(`linux-lts-arcbase`), avvisando su Telegram: vedi
+[`tools/kernel-mirror`](tools/kernel-mirror/README.md). Sui PC Arcbase:
+
+```bash
+sudo arcbase-kernel-mirror enable http://<server>:8080
+sudo pacman -S linux-arcbase linux-lts-arcbase
+```
+
+GRUB elenca tutti i kernel in `/boot` (lo rigenera `arcbase-grub-cfg` a ogni
+aggiornamento); le opzioni di avvio sono in `/etc/arcbase/boot.conf`.
 
 Credenziali iniziali: utente `arc` / password `arcbase` (anche per root).
 **Cambiale al primo accesso** con `passwd`, oppure impostale prima della build in

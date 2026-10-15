@@ -4,3 +4,6 @@ config/local.conf
 out/
 *.img
 *.qcow2
+# Segreti (token): mai nel repository
+.env
+*.env

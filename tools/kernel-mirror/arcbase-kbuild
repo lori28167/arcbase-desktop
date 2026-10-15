@@ -1,0 +1,849 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-kbuild — build automatica dei kernel per il mirror di Arcbase
+#
+#  Per ogni "flavor" controlla l'ultima versione su kernel.org e, se il
+#  mirror non ce l'ha ancora (o se la configurazione Arcbase è cambiata):
+#    1. scarica i sorgenti e ne verifica la firma GPG (Linus/Greg/Sasha)
+#    2. compila il kernel con config/kernel/arcbase.config
+#    3. crea il pacchetto pacman
+#    4. lo prova in QEMU: lo installa con pacman in una VM Arcbase, riavvia
+#       e controlla kernel in uso, systemd, moduli, audio, rete e dmesg
+#    5. se la prova passa lo pubblica nel repository [arcbase-kernel]
+#    6. invia l'esito su Telegram
+#
+#  Flavor:  stable -> linux-arcbase       (ultimo kernel stabile)
+#           lts    -> linux-lts-arcbase   (ultimo kernel longterm)
+#
+#  Uso:
+#    arcbase-kbuild run [stable|lts]... [--force] [--no-test]
+#    arcbase-kbuild check                 versioni pubblicate e su kernel.org
+#    arcbase-kbuild setup-vm [--iso FILE|URL]
+#                                         crea la VM di prova (da una ISO
+#                                         Arcbase con l'installer)
+#    arcbase-kbuild key [--generate]      chiave di firma del repository
+#    arcbase-kbuild repo                  rigenera il database del repository
+#    arcbase-kbuild notify-test           messaggio di prova su Telegram
+#
+#  Configurazione: /etc/arcbase-kbuild.conf (o $KB_CONF), vedi
+#  kbuild.conf.example. Segreti (token del bot Telegram) a parte in
+#  /etc/arcbase-kbuild.env (o $KB_ENV), permessi 600: vedi kbuild.env.example. Va eseguito come utente normale (non root).
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+shopt -s nullglob
+
+KB_CONF=${KB_CONF:-/etc/arcbase-kbuild.conf}
+# shellcheck source=/dev/null
+[[ -r $KB_CONF ]] && . "$KB_CONF"
+KB_ENV=${KB_ENV:-${KB_CONF%.conf}.env}
+if [[ -r $KB_ENV ]]; then
+    # shellcheck source=/dev/null
+    . "$KB_ENV"
+elif [[ -e $KB_ENV ]]; then
+    echo "arcbase-kbuild: $KB_ENV non leggibile da $(id -un): notifiche Telegram disattivate" >&2
+fi
+
+: "${KB_WORKDIR:=/var/lib/arcbase-kbuild}"
+: "${KB_REPO_DIR:=/srv/arcbase-mirror}"
+: "${KB_REPO_NAME:=arcbase-kernel}"
+: "${KB_FLAVORS:=stable lts}"
+: "${KB_KEEP:=3}"
+: "${KB_SRC:=}"
+: "${KB_GIT_URL:=https://github.com/lori28167/arcbase-desktop.git}"
+: "${KB_GIT_BRANCH:=main}"
+: "${KB_JOBS:=$(nproc)}"
+: "${KB_GPG_KEY:=}"
+: "${KB_TEST:=yes}"
+: "${KB_TEST_MEM:=4G}"
+: "${KB_TEST_CPUS:=4}"
+: "${KB_TEST_TIMEOUT:=900}"
+: "${KB_VM_PASSWORD:=arcbase-kbuild}"
+: "${KB_ISO:=}"
+: "${KB_GITHUB_REPO:=lori28167/arcbase-desktop}"
+: "${KB_LIVE_ROOT_PASSWORD:=arcbase}"
+: "${KB_RELEASES_URL:=https://www.kernel.org/releases.json}"
+: "${KB_KERNEL_KEYS:=ABAF11C65A2970B130ABE3C479BE3E4300411886 647F28654894E3BD457199BE38DBBDC86092693E E27E5D8A3403A2EF66873BBCDEA66FF797772CDC}"
+: "${KB_KERNEL_KEY_EMAILS:=torvalds@kernel.org gregkh@kernel.org sashal@kernel.org}"
+: "${KB_TELEGRAM_TOKEN:=}"
+: "${KB_TELEGRAM_CHAT:=}"
+: "${KB_TELEGRAM_API:=https://api.telegram.org}"
+: "${KB_NOTIFY_NOOP:=no}"
+: "${KB_PACKAGER:=Arcbase kernel builder <kbuild@$(hostname 2>/dev/null || echo localhost)>}"
+
+# Cambiare questo valore forza la ricompilazione di tutti i pacchetti (pkgrel+1)
+PKG_FORMAT=1
+ARCH=x86_64
+REPO_ARCH_DIR=$KB_REPO_DIR/$KB_REPO_NAME/$ARCH
+PATH=$PATH:/usr/sbin:/sbin
+
+# --- Output ----------------------------------------------------------------------
+if [[ -t 1 ]]; then C_G=$'\e[1;32m' C_Y=$'\e[1;33m' C_R=$'\e[1;31m' C_B=$'\e[1m' C_0=$'\e[0m'
+else C_G='' C_Y='' C_R='' C_B='' C_0=''; fi
+msg()  { printf '%s==>%s %s%s%s\n' "$C_G" "$C_0" "$C_B" "$*" "$C_0"; }
+info() { printf '  -> %s\n' "$*"; }
+warn() { printf '%s==> ATTENZIONE:%s %s\n' "$C_Y" "$C_0" "$*" >&2; }
+LAST_ERROR=''
+die()  { LAST_ERROR=$*; printf '%s==> ERRORE:%s %s\n' "$C_R" "$C_0" "$*" >&2; exit 1; }
+
+# --- Telegram ----------------------------------------------------------------------
+# Il token passa a curl da stdin (-K -), così non compare nella lista dei processi
+tg() {  # tg <metodo> <argomenti curl...>
+    [[ -n $KB_TELEGRAM_TOKEN && -n $KB_TELEGRAM_CHAT ]] || return 0
+    printf 'url = "%s/bot%s/%s"\n' "$KB_TELEGRAM_API" "$KB_TELEGRAM_TOKEN" "$1" |
+        curl -fsS -m 120 -o /dev/null -K - --form-string "chat_id=$KB_TELEGRAM_CHAT" "${@:2}" ||
+        warn "invio su Telegram ($1) non riuscito"
+}
+tg_msg()   { tg sendMessage --form-string parse_mode=HTML --form-string disable_web_page_preview=true --form-string "text=${1:0:4000}"; }
+tg_doc()   { tg sendDocument -F "document=@$1" --form-string "caption=${2:0:1000}"; }
+tg_photo() { tg sendPhoto -F "photo=@$1" --form-string "caption=${2:0:1000}"; }
+html()     { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$*"; }
+
+# --- Flavor ------------------------------------------------------------------------
+flavor_pkg() {
+    case $1 in
+        stable) echo linux-arcbase ;;
+        lts)    echo linux-lts-arcbase ;;
+        *) die "flavor sconosciuto: $1 (stable|lts)" ;;
+    esac
+}
+flavor_localversion() { case $1 in stable) echo -arcbase ;; lts) echo -arcbase-lts ;; esac; }
+flavor_label() { case $1 in stable) echo "stabile" ;; lts) echo "LTS (longterm)" ;; esac; }
+
+# releases.json di kernel.org -> "versione URL-sorgente URL-firma"
+RELEASES=''
+upstream() {  # upstream <flavor>
+    if [[ -z $RELEASES ]]; then
+        RELEASES=$(curl -fsSL -m 60 "$KB_RELEASES_URL") || die "impossibile leggere $KB_RELEASES_URL"
+    fi
+    python3 -c '
+import json, sys
+flavor, data = sys.argv[1], json.loads(sys.argv[2])
+want = {"stable": "stable", "lts": "longterm"}[flavor]
+key = lambda r: [int(x) for x in r["version"].split(".")]
+rels = [r for r in data["releases"] if r["moniker"] == want and not r["iseol"] and r.get("pgp")]
+if not rels:
+    sys.exit("nessuna versione " + want + " in releases.json")
+r = max(rels, key=key)
+print(r["version"], r["source"], r["pgp"])
+' "$1" "$RELEASES"
+}
+
+vercmp() {  # vercmp a b -> -1/0/1
+    [[ $1 == "$2" ]] && { echo 0; return; }
+    [[ $(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1) == "$1" ]] && echo -1 || echo 1
+}
+
+# Ultimo pacchetto pubblicato: "versione rel hash-config file"
+published() {  # published <pkgname>
+    local f best='' v
+    for f in "$REPO_ARCH_DIR/$1"-[0-9]*-"$ARCH".pkg.tar.zst; do
+        v=${f##*/"$1"-}; v=${v%-"$ARCH".pkg.tar.zst}
+        if [[ -z $best ]] || [[ $(vercmp "${v//-/.}" "${best//-/.}") == 1 ]]; then best=$v; fi
+    done
+    [[ -n $best ]] || return 0
+    f="$REPO_ARCH_DIR/$1-$best-$ARCH.pkg.tar.zst"
+    printf '%s %s %s %s\n' "${best%-*}" "${best##*-}" \
+        "$(bsdtar -xOf "$f" .PKGINFO | sed -n 's/^xdata = arcbaseconf=//p')" "$f"
+}
+
+# --- Sorgenti di Arcbase (configurazione del kernel) ---------------------------------
+SRC=''
+sync_src() {
+    if [[ -n $KB_SRC ]]; then
+        SRC=$KB_SRC
+    else
+        SRC=$KB_WORKDIR/arcbase-desktop
+        if [[ -d $SRC/.git ]]; then
+            git -C "$SRC" fetch -q --depth 1 origin "$KB_GIT_BRANCH"
+            git -C "$SRC" reset -q --hard FETCH_HEAD
+        else
+            git clone -q --depth 1 -b "$KB_GIT_BRANCH" "$KB_GIT_URL" "$SRC"
+        fi
+    fi
+    [[ -r $SRC/config/kernel/arcbase.config && -r $SRC/config/kernel/required-options ]] ||
+        die "$SRC non contiene config/kernel/arcbase.config e required-options"
+}
+
+confhash() {  # confhash <flavor>
+    { echo "format=$PKG_FORMAT localversion=$(flavor_localversion "$1")"
+      cat "$SRC/config/kernel/arcbase.config" "$SRC/config/kernel/required-options"
+    } | sha256sum | cut -c1-16
+}
+
+src_rev() { git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo locale; }
+
+# --- Sorgenti del kernel: download e verifica della firma ---------------------------
+kgpg() { gpg --homedir "$KB_WORKDIR/kernel-keys" --batch --no-tty "$@"; }
+
+kernel_keys() {
+    local fpr missing=0
+    install -d -m700 "$KB_WORKDIR/kernel-keys"
+    for fpr in $KB_KERNEL_KEYS; do kgpg --list-keys "$fpr" >/dev/null 2>&1 || missing=1; done
+    (( missing )) || return 0
+    info "importo le chiavi di firma di kernel.org"
+    # shellcheck disable=SC2086
+    kgpg --auto-key-locate clear,nodefault,wkd --locate-keys $KB_KERNEL_KEY_EMAILS >/dev/null 2>&1 || :
+    for fpr in $KB_KERNEL_KEYS; do
+        kgpg --list-keys "$fpr" >/dev/null 2>&1 ||
+            kgpg --keyserver hkps://keyserver.ubuntu.com --recv-keys "$fpr" >/dev/null 2>&1 ||
+            warn "chiave $fpr non disponibile"
+    done
+}
+
+fetch_kernel() {  # fetch_kernel <versione> <url> <url-firma>  -> imposta TARBALL
+    local ver=$1 url=$2 sigurl=$3 d=$KB_REPO_DIR/sources tar sig signer
+    tar=$d/${url##*/} sig=$d/${sigurl##*/}
+    install -d "$d"
+    if [[ ! -s $sig ]]; then
+        curl -fsSL -m 120 -o "$sig.part" "$sigurl" || die "download della firma $sigurl non riuscito"
+        mv -f "$sig.part" "$sig"
+    fi
+    if [[ ! -s $tar ]]; then
+        info "download di linux-$ver"
+        curl -fsSL -m 3600 --retry 3 -o "$tar.part" "$url" || die "download di $url non riuscito"
+        mv -f "$tar.part" "$tar"
+    fi
+    kernel_keys
+    # La firma copre il .tar non compresso; VALIDSIG riporta per ultima
+    # l'impronta della chiave primaria
+    signer=$(xz -dc "$tar" | kgpg --status-fd 1 --verify "$sig" - 2>/dev/null | awk '$2=="VALIDSIG"{print $NF}') || :
+    if [[ -z $signer || " $KB_KERNEL_KEYS " != *" $signer "* ]]; then
+        rm -f "$tar" "$sig"
+        die "firma di linux-$ver NON valida (firmatario: ${signer:-nessuno}): sorgenti scartati"
+    fi
+    info "firma valida (chiave $signer)"
+    TARBALL=$tar
+}
+
+# --- Build --------------------------------------------------------------------------------
+build_kernel() {  # build_kernel <flavor> <versione> <rel> <hash> <tarball>  -> imposta PKGFILE KREL WARNINGS
+    local flavor=$1 ver=$2 rel=$3 hash=$4 tarball=$5 pkgname bdir ksrc opt val have
+    pkgname=$(flavor_pkg "$flavor")
+    bdir=$KB_WORKDIR/build/$pkgname
+    rm -rf "$bdir"; mkdir -p "$bdir"
+    info "estrazione dei sorgenti"
+    tar -xf "$tarball" -C "$bdir"
+    ksrc=$bdir/linux-$ver
+    [[ -d $ksrc ]] || die "$tarball non contiene linux-$ver/"
+    printf 'CONFIG_LOCALVERSION="%s"\nCONFIG_LOCALVERSION_AUTO=n\n' "$(flavor_localversion "$flavor")" > "$bdir/flavor.config"
+
+    info "configurazione (defconfig + arcbase.config)"
+    ( cd "$ksrc"
+      make -s defconfig
+      scripts/kconfig/merge_config.sh -m .config "$SRC/config/kernel/arcbase.config" "$bdir/flavor.config" >/dev/null
+      make -s olddefconfig )
+    while read -r opt; do
+        [[ -z $opt || $opt == \#* ]] && continue
+        grep -q "^CONFIG_$opt=y" "$ksrc/.config" || die "CONFIG_$opt non attiva in linux-$ver: configurazione da aggiornare"
+    done < "$SRC/config/kernel/required-options"
+    # Opzioni di arcbase.config che il kernel nuovo non ha più (rinominate o rimosse)
+    WARNINGS=$(while IFS='=' read -r opt val; do
+            [[ $opt == CONFIG_* && $opt != CONFIG_LOCALVERSION ]] || continue
+            have=$(grep -m1 -E "^$opt=|^# $opt is not set" "$ksrc/.config" || :)
+            case $val in
+                n) [[ -z $have || $have == "# $opt is not set" ]] || echo "$opt" ;;
+                *) [[ $have == "$opt=$val" ]] || echo "$opt" ;;
+            esac
+        done < <(grep -E '^CONFIG_[A-Z0-9_]+=' "$SRC/config/kernel/arcbase.config"))
+
+    info "compilazione con $KB_JOBS processi"
+    ( cd "$ksrc" && nice -n 10 make -j"$KB_JOBS" bzImage modules ) > "$bdir/make.log" 2>&1 ||
+        { grep -E -B2 -A3 'error|Error [0-9]' "$bdir/make.log" | tail -n 60; die "compilazione di linux-$ver fallita"; }
+    KREL=$(make -s -C "$ksrc" kernelrelease)
+
+    info "creazione del pacchetto ($KREL)"
+    mkdir -p "$REPO_ARCH_DIR"
+    PKGFILE="$REPO_ARCH_DIR/.staging/$pkgname-$ver-$rel-$ARCH.pkg.tar.zst"
+    mkdir -p "${PKGFILE%/*}"
+    fakeroot -- "$0" _package "$flavor" "$ver" "$rel" "$hash" "$ksrc" "$KREL" "$bdir/pkg" "$PKGFILE"
+    info "pacchetto: ${PKGFILE##*/} ($(du -h "$PKGFILE" | cut -f1))"
+    rm -rf "$bdir"
+}
+
+# Eseguito dentro fakeroot: i file del pacchetto risultano di root
+cmd__package() {
+    local flavor=$1 ver=$2 rel=$3 hash=$4 ksrc=$5 krel=$6 pkgdir=$7 out=$8 pkgname
+    pkgname=$(flavor_pkg "$flavor")
+    rm -rf "$pkgdir"; mkdir -p "$pkgdir/boot"
+    install -m644 "$ksrc/arch/x86/boot/bzImage" "$pkgdir/boot/vmlinuz-$krel"
+    install -m644 "$ksrc/System.map" "$pkgdir/boot/System.map-$krel"
+    install -m644 "$ksrc/.config" "$pkgdir/boot/config-$krel"
+    make -s -C "$ksrc" INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 DEPMOD="$(command -v depmod)" \
+        modules_install > /dev/null
+    rm -f "$pkgdir/usr/lib/modules/$krel/build" "$pkgdir/usr/lib/modules/$krel/source"
+    echo "$pkgname" > "$pkgdir/usr/lib/modules/$krel/pkgbase"
+    [[ -s $pkgdir/usr/lib/modules/$krel/modules.dep ]] || { echo "modules.dep mancante (depmod?)" >&2; exit 1; }
+    chown -R 0:0 "$pkgdir"
+
+    cat > "$pkgdir/.PKGINFO" <<EOF
+# Generato da arcbase-kbuild $(date -u +%FT%TZ)
+pkgname = $pkgname
+pkgbase = $pkgname
+xdata = pkgtype=pkg
+pkgver = $ver-$rel
+pkgdesc = Kernel Linux $ver ($(flavor_label "$flavor")) con la configurazione di Arcbase Desktop
+url = https://www.kernel.org
+builddate = $(date +%s)
+packager = $KB_PACKAGER
+size = $(du -sb "$pkgdir/boot" "$pkgdir/usr" | awk '{s+=$1} END {print s}')
+arch = $ARCH
+license = GPL-2.0-only
+optdepend = linux-firmware: firmware per GPU, Wi-Fi, Bluetooth e audio
+xdata = arcbaseconf=$hash
+xdata = arcbasesrc=$(src_rev)
+EOF
+    # Con l'hook 90-arcbase-grub.hook (Arcbase >= 1.1) GRUB lo aggiorna pacman;
+    # sui sistemi più vecchi si punta il grub.cfg esistente al kernel più recente
+    cat > "$pkgdir/.INSTALL" <<'EOF'
+_arcbase_grub() {
+    [ -e /usr/share/libalpm/hooks/90-arcbase-grub.hook ] && return 0
+    [ -f /boot/grub/grub.cfg ] || return 0
+    k=$(ls /boot/vmlinuz-* 2>/dev/null | sort -V | tail -n1)
+    [ -n "$k" ] || return 0
+    sed -i "s#/boot/vmlinuz-[^ ]*#/boot/${k##*/}#" /boot/grub/grub.cfg
+    echo "grub.cfg: avvio da ${k##*/}"
+}
+post_install() { _arcbase_grub; }
+post_upgrade() { _arcbase_grub; }
+post_remove()  { _arcbase_grub; }
+EOF
+    cd "$pkgdir"
+    LANG=C bsdtar -cf - --format=mtree \
+        --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
+        .PKGINFO .INSTALL boot usr | gzip -c -f -n > .MTREE
+    LANG=C bsdtar -cf - .PKGINFO .MTREE .INSTALL boot usr | zstd -q -c -T0 -19 > "$out.part"
+    mv -f "$out.part" "$out"
+}
+
+# --- Firma e repository ----------------------------------------------------------------
+sgpg() { gpg --homedir "$KB_WORKDIR/signing" --batch --no-tty "$@"; }
+signing_key() {
+    if [[ -n $KB_GPG_KEY ]]; then echo "$KB_GPG_KEY"; return; fi
+    [[ -d $KB_WORKDIR/signing ]] || return 0
+    sgpg --with-colons --list-secret-keys 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}'
+}
+sign() {  # sign <file>: crea <file>.sig se c'è una chiave
+    local key; key=$(signing_key)
+    [[ -n $key ]] || return 0
+    sgpg --yes --detach-sign --no-armor -u "$key" -o "$1.sig" "$1"
+}
+
+# Database del repository (stesso formato di repo-add): una voce per pacchetto,
+# solo la versione più recente di ciascuno; le precedenti restano scaricabili
+# (pacman -U <url>) fino a KB_KEEP versioni.
+cmd_repo() {
+    local d=$REPO_ARCH_DIR tmp names name f v i keep entry info key
+    mkdir -p "$d"
+    tmp=$(mktemp -d)
+    mkdir -p "$tmp/db" "$tmp/files"
+    names=$(for f in "$d"/*.pkg.tar.zst; do bsdtar -xOf "$f" .PKGINFO | sed -n 's/^pkgname = //p'; done | sort -u)
+    for name in $names; do
+        mapfile -t vers < <(for f in "$d/$name"-[0-9]*-"$ARCH".pkg.tar.zst; do
+                v=${f##*/"$name"-}; echo "${v%-"$ARCH".pkg.tar.zst}"; done | sort -V -r)
+        keep=${KB_KEEP}
+        for (( i = keep; i < ${#vers[@]}; i++ )); do
+            info "rimuovo la versione vecchia $name-${vers[i]}"
+            rm -f "$d/$name-${vers[i]}-$ARCH.pkg.tar.zst" "$d/$name-${vers[i]}-$ARCH.pkg.tar.zst.sig"
+        done
+        f="$d/$name-${vers[0]}-$ARCH.pkg.tar.zst"
+        entry="$name-${vers[0]}"
+        info=$(bsdtar -xOf "$f" .PKGINFO)
+        field() { sed -n "s/^$1 = //p" <<<"$info"; }
+        mkdir -p "$tmp/db/$entry" "$tmp/files/$entry"
+        {
+            printf '%%FILENAME%%\n%s\n\n' "${f##*/}"
+            printf '%%NAME%%\n%s\n\n' "$name"
+            printf '%%BASE%%\n%s\n\n' "$(field pkgbase)"
+            printf '%%VERSION%%\n%s\n\n' "$(field pkgver)"
+            printf '%%DESC%%\n%s\n\n' "$(field pkgdesc)"
+            printf '%%CSIZE%%\n%s\n\n' "$(stat -c %s "$f")"
+            printf '%%ISIZE%%\n%s\n\n' "$(field size)"
+            printf '%%SHA256SUM%%\n%s\n\n' "$(sha256sum "$f" | cut -d' ' -f1)"
+            [[ -f $f.sig ]] && printf '%%PGPSIG%%\n%s\n\n' "$(base64 -w0 "$f.sig")"
+            printf '%%URL%%\n%s\n\n' "$(field url)"
+            printf '%%LICENSE%%\n%s\n\n' "$(field license)"
+            printf '%%ARCH%%\n%s\n\n' "$(field arch)"
+            printf '%%BUILDDATE%%\n%s\n\n' "$(field builddate)"
+            printf '%%PACKAGER%%\n%s\n\n' "$(field packager)"
+            printf '%%OPTDEPENDS%%\n%s\n\n' "$(field optdepend)"
+        } > "$tmp/db/$entry/desc"
+        cp "$tmp/db/$entry/desc" "$tmp/files/$entry/desc"
+        { echo '%FILES%'
+          bsdtar -tf "$f" | grep -v '^\.' | sort
+          echo
+        } > "$tmp/files/$entry/files"
+    done
+    for key in db files; do
+        ( cd "$tmp/$key"
+          entries=(*)
+          if (( ${#entries[@]} )); then
+              bsdtar -czf "$tmp/$KB_REPO_NAME.$key.tar.gz" --uid 0 --gid 0 --uname root --gname root -- "${entries[@]}"
+          else
+              bsdtar -czf "$tmp/$KB_REPO_NAME.$key.tar.gz" --format=ustar -T /dev/null
+          fi )
+        sign "$tmp/$KB_REPO_NAME.$key.tar.gz"
+        mv -f "$tmp/$KB_REPO_NAME.$key.tar.gz" "$d/"
+        ln -sfn "$KB_REPO_NAME.$key.tar.gz" "$d/$KB_REPO_NAME.$key"
+        if [[ -f $tmp/$KB_REPO_NAME.$key.tar.gz.sig ]]; then
+            mv -f "$tmp/$KB_REPO_NAME.$key.tar.gz.sig" "$d/"
+            ln -sfn "$KB_REPO_NAME.$key.tar.gz.sig" "$d/$KB_REPO_NAME.$key.sig"
+        else
+            rm -f "$d/$KB_REPO_NAME.$key.tar.gz.sig" "$d/$KB_REPO_NAME.$key.sig"
+        fi
+    done
+    rm -rf "$tmp"
+    key=$(signing_key)
+    if [[ -n $key ]]; then
+        sgpg --armor --export "$key" > "$KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc"
+    fi
+    info "database $KB_REPO_NAME aggiornato ($(wc -w <<<"$names") pacchetti)"
+}
+
+cmd_key() {
+    local key
+    if [[ ${1:-} == --generate ]]; then
+        [[ -z $(signing_key) ]] || die "esiste già una chiave: $(signing_key)"
+        install -d -m700 "$KB_WORKDIR/signing"
+        sgpg --passphrase '' --quick-gen-key "Arcbase kernel mirror <kbuild@$(hostname)>" ed25519 sign never
+        mkdir -p "$KB_REPO_DIR/$KB_REPO_NAME"
+    fi
+    key=$(signing_key)
+    [[ -n $key ]] || die "nessuna chiave di firma: arcbase-kbuild key --generate"
+    mkdir -p "$KB_REPO_DIR/$KB_REPO_NAME"
+    sgpg --armor --export "$key" > "$KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc"
+    echo "Chiave di firma del mirror: $key"
+    echo "Pubblica in: $KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc"
+}
+
+# --- VM di prova (QEMU) ------------------------------------------------------------------
+VMDIR=$KB_WORKDIR/vm
+QPID='' QDIR='' HTTPPID=''
+
+accel() {
+    if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+        echo "-machine q35,accel=kvm -cpu host"
+    else
+        warn "/dev/kvm non accessibile: emulazione TCG (molto più lenta)" >&2
+        echo "-machine q35 -cpu max"
+    fi
+}
+
+qemu_start() {  # qemu_start <log> <opzioni...>
+    local log=$1; shift
+    [[ -n $QDIR ]] || QDIR=$(mktemp -d /tmp/akb.XXXXXX)   # socket unix: percorso corto
+    rm -f "$QDIR/s" "$QDIR/m"
+    # shellcheck disable=SC2046
+    qemu-system-x86_64 $(accel) -smp "$KB_TEST_CPUS" -m "$KB_TEST_MEM" "$@" \
+        -device virtio-vga -display none \
+        -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+        -device intel-hda -device hda-duplex \
+        -chardev "socket,id=s0,path=$QDIR/s,server=on,wait=off,logfile=$log" \
+        -serial chardev:s0 -monitor "unix:$QDIR/m,server,nowait" > "$log.qemu" 2>&1 &
+    QPID=$!
+}
+qemu_stop() {
+    [[ -n $QPID ]] || return 0
+    kill "$QPID" 2>/dev/null || :
+    wait "$QPID" 2>/dev/null || :
+    QPID=''
+}
+vm_cleanup() {
+    qemu_stop
+    [[ -n $HTTPPID ]] && { kill "$HTTPPID" 2>/dev/null || :; wait "$HTTPPID" 2>/dev/null || :; HTTPPID=''; }
+    [[ -n $QDIR && -d $QDIR ]] && rm -rf "$QDIR"
+    QDIR=''
+}
+
+# Console seriale pilotata come "expect":
+#   expect:<regex>  send:<testo>  timeout:<s>  print:<regex con un gruppo>
+serial() {  # serial <log> <passi...>
+    python3 - "$QDIR/s" "$@" <<'EOF'
+import re, socket, sys, time
+sock_path, log_path, steps = sys.argv[1], sys.argv[2], sys.argv[3:]
+for _ in range(300):
+    try:
+        s = socket.socket(socket.AF_UNIX); s.connect(sock_path); break
+    except OSError:
+        time.sleep(0.2)
+else:
+    sys.exit("console seriale non disponibile")
+s.settimeout(1)
+log, buf, timeout = open(log_path, 'ab'), b'', 900
+def wait(pattern):
+    global buf
+    rx, end = re.compile(pattern.encode()), time.time() + timeout
+    while time.time() < end:
+        m = rx.search(buf)
+        if m:
+            buf = buf[m.end():]
+            return m
+        try:
+            data = s.recv(65536)
+            if not data:
+                sys.exit("console chiusa aspettando: " + pattern)
+            log.write(data); log.flush(); buf += data
+        except socket.timeout:
+            pass
+    sys.exit("timeout aspettando: " + pattern)
+for st in steps:
+    kind, _, arg = st.partition(':')
+    if kind == 'timeout':
+        timeout = int(arg)
+    elif kind == 'expect':
+        wait(arg)
+    elif kind == 'print':
+        print(wait(arg).group(1).decode(errors='replace').strip())
+    elif kind == 'send':
+        time.sleep(0.5); s.sendall(arg.encode() + b'\r')
+EOF
+}
+
+screenshot() {  # screenshot <png>: schermo della VM in PNG (senza ImageMagick)
+    local ppm=$QDIR/shot.ppm
+    python3 - "$QDIR/m" "$ppm" <<'EOF'
+import socket, sys, time
+s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1])
+time.sleep(0.3); s.recv(65536)
+s.sendall(("screendump " + sys.argv[2] + "\n").encode()); time.sleep(2); s.close()
+EOF
+    python3 - "$ppm" "$1" <<'EOF'
+import struct, sys, zlib
+data = open(sys.argv[1], 'rb').read()
+parts, pos = [], 0
+while len(parts) < 4:
+    while data[pos:pos+1].isspace(): pos += 1
+    end = pos
+    while not data[end:end+1].isspace(): end += 1
+    parts.append(data[pos:end]); pos = end
+pos += 1
+w, h = int(parts[1]), int(parts[2])
+px = data[pos:pos + w * h * 3]
+raw = b''.join(b'\0' + px[y*w*3:(y+1)*w*3] for y in range(h))
+chunk = lambda t, d: struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+open(sys.argv[2], 'wb').write(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
+    + chunk(b'IDAT', zlib.compress(raw, 6)) + chunk(b'IEND', b''))
+EOF
+}
+
+login_steps() {  # passi per accedere come root alla console seriale
+    printf '%s\n' "timeout:$KB_TEST_TIMEOUT" "expect:$1 login: ?\$" 'send:root' 'expect:[Pp]assword: ?' "send:$2" \
+        'timeout:120' 'send:echo READY_$((40+2))' 'expect:READY_42'
+}
+
+find_iso() {
+    local iso=${1:-$KB_ISO} d=$VMDIR/iso api tag names n
+    if [[ -n $iso && -f $iso ]]; then printf '%s\n' "$iso"; return; fi
+    mkdir -p "$d"
+    if [[ $iso == http://* || $iso == https://* ]]; then
+        info "download della ISO: $iso" >&2
+        curl -fL -m 7200 -o "$d/arcbase.iso" "$iso" || die "download della ISO non riuscito"
+        printf '%s\n' "$d/arcbase.iso"; return
+    fi
+    [[ -z $iso ]] || die "ISO non trovata: $iso"
+    # Ultima release su GitHub (ISO divisa in parti + SHA256SUMS)
+    api=$(curl -fsSL -m 60 "https://api.github.com/repos/$KB_GITHUB_REPO/releases/latest") ||
+        die "impossibile leggere le release di $KB_GITHUB_REPO"
+    tag=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["tag_name"])' "$api")
+    info "ISO dalla release $tag di $KB_GITHUB_REPO" >&2
+    mapfile -t names < <(python3 -c '
+import json, sys
+for a in json.loads(sys.argv[1])["assets"]:
+    if ".iso" in a["name"] or a["name"] == "SHA256SUMS":
+        print(a["name"] + " " + a["browser_download_url"])' "$api")
+    (( ${#names[@]} )) || die "la release $tag non contiene una ISO"
+    for n in "${names[@]}"; do
+        [[ -s $d/${n%% *} ]] || curl -fL -m 7200 --retry 3 -o "$d/${n%% *}" "${n#* }" >&2 ||
+            die "download di ${n%% *} non riuscito"
+    done
+    iso=$(cd "$d" && sed -n 's/^[0-9a-f]\{64\} \*\{0,1\}\(.*\.iso\)$/\1/p' SHA256SUMS | head -n1)
+    [[ -n $iso ]] || die "SHA256SUMS senza ISO"
+    if [[ ! -s $d/$iso ]]; then
+        cat "$d/$iso".part* > "$d/$iso.tmp" && mv "$d/$iso.tmp" "$d/$iso"
+    fi
+    (cd "$d" && sha256sum -c --ignore-missing --quiet SHA256SUMS >&2) || die "checksum della ISO errato"
+    printf '%s\n' "$d/$iso"
+}
+
+cmd_setup_vm() {
+    local iso='' log rc
+    while (( $# )); do
+        case $1 in
+            --iso) iso=$2; shift ;;
+            *) die "opzione sconosciuta: $1" ;;
+        esac
+        shift
+    done
+    iso=$(find_iso "$iso")
+    mkdir -p "$VMDIR"
+    trap vm_cleanup EXIT
+    rm -f "$VMDIR/base.qcow2.new"
+    qemu-img create -q -f qcow2 "$VMDIR/base.qcow2.new" 30G
+
+    log=$VMDIR/setup-install.log; rm -f "$log"
+    msg "Installazione di Arcbase nella VM di prova (da ${iso##*/}) — log: $log"
+    qemu_start "$log" -no-reboot -cdrom "$iso" -boot d -drive "file=$VMDIR/base.qcow2.new,format=qcow2,if=virtio"
+    mapfile -t steps < <(login_steps '' "$KB_LIVE_ROOT_PASSWORD")
+    rc=$(serial "$QDIR/raw" "${steps[@]}" \
+        'send:command -v arcbase-install >/dev/null; echo INSTALLER_$((1+$?))' \
+        'print:INSTALLER_([0-9]+)\r?\n') || die "la ISO non arriva al login (vedi $log)"
+    [[ $rc == 1 ]] || die "la ISO non contiene arcbase-install: serve Arcbase Desktop >= 1.1"
+    rc=$(serial "$QDIR/raw" "timeout:$KB_TEST_TIMEOUT" \
+        "send:arcbase-install --disk /dev/vda --yes --hostname kbuild-test --user tester --fullname Test --password '$KB_VM_PASSWORD' --root-password '$KB_VM_PASSWORD' --timezone UTC --cmdline 'console=ttyS0,115200 console=tty0'; echo INSTALL_RC=\$?" \
+        'print:INSTALL_RC=([0-9]+)\r?\n') || rc=x
+    [[ $rc == 0 ]] || die "arcbase-install fallito ($rc), vedi $log"
+    serial "$QDIR/raw" 'timeout:120' 'send:poweroff' 'expect:Power down' || :
+    for _ in $(seq 60); do kill -0 "$QPID" 2>/dev/null || break; sleep 1; done
+    qemu_stop
+
+    log=$VMDIR/setup-boot.log; rm -f "$log"
+    msg "Primo avvio della VM installata — log: $log"
+    qemu_start "$log" -no-reboot -drive "file=$VMDIR/base.qcow2.new,format=qcow2,if=virtio"
+    mapfile -t steps < <(login_steps kbuild-test "$KB_VM_PASSWORD")
+    rc=$(serial "$QDIR/raw" "${steps[@]}" 'timeout:300' \
+        'send:systemctl is-system-running --wait >/dev/null; echo "BASE_$((1+1)) $(uname -r) $(systemctl is-system-running)"' \
+        'print:BASE_2 ([^\r\n]+)\r?\n') || die "la VM installata non arriva al login (vedi $log)"
+    info "$rc"
+    serial "$QDIR/raw" 'timeout:120' 'send:poweroff' 'expect:Power down' || :
+    for _ in $(seq 60); do kill -0 "$QPID" 2>/dev/null || break; sleep 1; done
+    qemu_stop
+    mv -f "$VMDIR/base.qcow2.new" "$VMDIR/base.qcow2"
+    msg "VM di prova pronta: $VMDIR/base.qcow2"
+}
+
+# Prova del pacchetto: lo installa con pacman in una copia della VM, riavvia
+# e verifica il sistema. Imposta TEST_SUMMARY e TEST_SHOT.
+test_pkg() {  # test_pkg <pacchetto> <kernelrelease>
+    local pkg=$1 krel=$2 log overlay port out check grubline k state mods snd net line
+    TEST_SUMMARY='' TEST_SHOT='' TEST_CONSOLE=''
+    [[ -f $VMDIR/base.qcow2 ]] || { TEST_SUMMARY="VM di prova mancante (arcbase-kbuild setup-vm)"; return 1; }
+    overlay=$VMDIR/test.qcow2
+    log=$KB_WORKDIR/logs/console-${pkg##*/}.log; rm -f "$log"
+    TEST_CONSOLE=$log
+    qemu-img create -q -f qcow2 -b "$VMDIR/base.qcow2" -F qcow2 "$overlay" ||
+        { TEST_SUMMARY="impossibile creare il disco della prova"; return 1; }
+    QDIR=$(mktemp -d /tmp/akb.XXXXXX)
+    # Il pacchetto arriva alla VM via HTTP (10.0.2.2 = 127.0.0.1 dell'host)
+    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+    python3 -m http.server -b 127.0.0.1 -d "${pkg%/*}" "$port" > /dev/null 2>&1 &
+    HTTPPID=$!
+    info "prova in QEMU — log: $log"
+    qemu_start "$log" -drive "file=$overlay,format=qcow2,if=virtio"
+    mapfile -t steps < <(login_steps kbuild-test "$KB_VM_PASSWORD")
+    if ! out=$(serial "$QDIR/raw" "${steps[@]}" 'timeout:600' \
+            "send:curl -fsSo /var/tmp/k.pkg.tar.zst http://10.0.2.2:$port/${pkg##*/} && pacman -U --noconfirm /var/tmp/k.pkg.tar.zst; echo PAC_RC=\$?" \
+            'print:PAC_RC=([0-9]+)\r?\n' \
+            'send:echo "GRUB_$((1+1)) $(grep -m1 "^ *linux " /boot/grub/grub.cfg)"' 'print:GRUB_2 ([^\r\n]*)\r?\n'); then
+        TEST_SUMMARY="la VM non arriva al login o pacman non risponde"; vm_cleanup; return 1
+    fi
+    if [[ $(head -n1 <<<"$out") != 0 ]]; then
+        TEST_SUMMARY="pacman -U fallito nella VM"; vm_cleanup; return 1
+    fi
+    grubline=$(tail -n1 <<<"$out")
+    if [[ $grubline != *"/boot/vmlinuz-$krel "* ]]; then
+        TEST_SUMMARY="GRUB non avvia il nuovo kernel: $grubline"; vm_cleanup; return 1
+    fi
+    info "installato, GRUB aggiornato: riavvio"
+    serial "$QDIR/raw" 'send:reboot' || :
+    mapfile -t steps < <(login_steps kbuild-test "$KB_VM_PASSWORD")
+    if ! out=$(serial "$QDIR/raw" "${steps[@]}" 'timeout:300' \
+            'send:systemctl is-system-running --wait >/dev/null; echo "KCHECK_$((2+2)) $(uname -r) $(systemctl is-system-running) $(lsmod | tail -n +2 | wc -l) $(ls /sys/class/sound | grep -c "^card") $(ip -4 route show default | grep -c .)"; systemctl --failed --no-legend --plain | sed "s/^/FAILED /"; dmesg | grep -E "BUG:|Oops|Call Trace|Kernel panic|WARNING: CPU" | head -n 5 | sed "s/^/DMESG /"; echo KEND_$((3+3))' \
+            'print:KCHECK_4 ([^\r\n]+)\r?\n' 'print:([\s\S]*?)KEND_6'); then
+        TEST_SUMMARY="il nuovo kernel non arriva al login"; vm_cleanup; return 1
+    fi
+    check=$(head -n1 <<<"$out")
+    read -r k state mods snd net <<<"$check"
+    TEST_SUMMARY="kernel $k · systemd $state · $mods moduli · audio $snd · rete $net"
+    local problems=()
+    [[ $k == "$krel" ]] || problems+=("avviato $k invece di $krel")
+    [[ $state == running ]] || problems+=("systemd: $state")
+    (( mods > 0 )) || problems+=("nessun modulo caricato")
+    (( snd > 0 )) || problems+=("nessuna scheda audio")
+    (( net > 0 )) || problems+=("nessuna rete")
+    while read -r line; do
+        [[ $line == FAILED* || $line == DMESG* ]] && problems+=("${line//$'\r'/}")
+    done <<<"$out"
+    info "$TEST_SUMMARY"
+    info "attendo il login grafico per la schermata"
+    sleep 25
+    TEST_SHOT=$KB_WORKDIR/logs/test-${pkg##*/}.png
+    screenshot "$TEST_SHOT" 2>/dev/null || TEST_SHOT=''
+    serial "$QDIR/raw" 'timeout:60' 'send:poweroff' 'expect:Power down|reboot: ' || :
+    vm_cleanup
+    rm -f "$overlay"
+    if (( ${#problems[@]} )); then
+        TEST_SUMMARY+=$'\n'"$(printf '%s\n' "${problems[@]}")"
+        return 1
+    fi
+}
+
+# --- Ciclo principale -------------------------------------------------------------------
+# Ogni flavor gira in un processo figlio (arcbase-kbuild _flavor), così
+# `set -e` resta attivo: qualunque errore interrompe la build e viene notificato.
+# Codici d'uscita del figlio: 0 pubblicato, 10 già aggiornato, 3 saltato
+# (fallito in precedenza), altro = errore.
+NOTIFIED='' FAILKEY='' LABEL=''
+flavor_exit() {
+    local rc=$1
+    vm_cleanup
+    case $rc in 0|3|10) return ;; esac
+    if [[ -n $FAILKEY ]]; then
+        mkdir -p "$KB_WORKDIR/state"
+        echo "$FAILKEY" > "$KB_WORKDIR/state/$(flavor_pkg "$FLAVOR").failed"
+    fi
+    [[ -n $NOTIFIED ]] || tg_msg "❌ <b>$(html "$LABEL")</b> su $(hostname): $(html "${LAST_ERROR:-errore inatteso (codice $rc)}")"
+}
+
+cmd__flavor() {  # _flavor <flavor> <force 0/1> <test 0/1>
+    FLAVOR=$1
+    local force=$2 dotest=$3 pkgname ver url sigurl pver prel phash hash rel t0 elapsed nwarn text
+    pkgname=$(flavor_pkg "$FLAVOR")
+    LABEL=$pkgname
+    trap 'flavor_exit $?' EXIT
+    SRC=${KB_SRC:?}
+
+    read -r ver url sigurl < <(upstream "$FLAVOR")
+    [[ -n ${sigurl:-} ]] || die "versione $FLAVOR su kernel.org non disponibile"
+    read -r pver prel phash _ < <(published "$pkgname"; echo)
+    pver=${pver:--} prel=${prel:-0} phash=${phash:-}
+    hash=$(confhash "$FLAVOR")
+    if [[ $pver == - ]] || [[ $(vercmp "$ver" "$pver") == 1 ]]; then
+        rel=1
+    elif [[ $ver == "$pver" && $hash != "$phash" ]]; then
+        rel=$((prel + 1))
+        info "configurazione Arcbase cambiata: ricompilo $ver (rel $rel)"
+    elif (( force )); then
+        rel=$((prel + 1))
+    else
+        msg "$pkgname $pver-$prel è già aggiornato (kernel.org: $ver)"
+        [[ $KB_NOTIFY_NOOP == yes ]] && tg_msg "ℹ️ <b>$pkgname</b> $pver-$prel è già l'ultima versione"
+        exit 10
+    fi
+    LABEL="$pkgname $ver-$rel"
+    if (( ! force )) && [[ $(cat "$KB_WORKDIR/state/$pkgname.failed" 2>/dev/null) == "$ver-$rel $hash" ]]; then
+        msg "$LABEL è già fallito in precedenza: salto (arcbase-kbuild run $FLAVOR --force per riprovare)"
+        exit 3
+    fi
+    msg "$pkgname: $([[ $pver == - ]] && echo "prima build:" || echo "$pver-$prel ->") $ver-$rel"
+
+    t0=$SECONDS
+    fetch_kernel "$ver" "$url" "$sigurl"
+    FAILKEY="$ver-$rel $hash"
+    build_kernel "$FLAVOR" "$ver" "$rel" "$hash" "$TARBALL"
+    elapsed=$(( (SECONDS - t0) / 60 ))
+    nwarn=$(grep -c . <<<"$WARNINGS" || :)
+
+    if (( dotest )); then
+        msg "Prova di $LABEL in QEMU"
+        if ! test_pkg "$PKGFILE" "$KREL"; then
+            rm -f "$PKGFILE"
+            printf '%s\n' "$TEST_SUMMARY"
+            tg_msg "❌ <b>$(html "$LABEL")</b>: prova in QEMU fallita, non pubblicato
+$(html "$TEST_SUMMARY")"
+            if [[ -s $TEST_CONSOLE ]]; then
+                tail -n 80 "$TEST_CONSOLE" | tr -d '\r' > "$TEST_CONSOLE.tail.txt"
+                tg_doc "$TEST_CONSOLE.tail.txt" "Console seriale di $LABEL (ultime righe)"
+            fi
+            NOTIFIED=1
+            die "prova in QEMU fallita"
+        fi
+    else
+        TEST_SUMMARY="prova in QEMU saltata" TEST_SHOT=''
+    fi
+
+    sign "$PKGFILE"
+    mv -f "$PKGFILE" "$REPO_ARCH_DIR/"
+    [[ ! -f $PKGFILE.sig ]] || mv -f "$PKGFILE.sig" "$REPO_ARCH_DIR/"
+    cmd_repo
+    rm -f "$KB_WORKDIR/state/$pkgname.failed"
+    msg "$LABEL pubblicato ($KREL, build $elapsed min)"
+    text="✅ <b>$(html "$LABEL")</b> pubblicato
+Kernel $(flavor_label "$FLAVOR") $KREL · build $elapsed min · config $(src_rev)
+🧪 $(html "$TEST_SUMMARY")"
+    if (( nwarn )); then
+        text+="
+⚠️ $nwarn opzioni di arcbase.config assenti nel nuovo kernel: $(html "$(paste -sd' ' <<<"$WARNINGS" | cut -c1-600)")"
+    fi
+    tg_msg "$text"
+    [[ -z $TEST_SHOT || ! -s $TEST_SHOT ]] || tg_photo "$TEST_SHOT" "$LABEL avviato in QEMU"
+}
+
+cmd_run() {
+    local force=0 dotest=1 flavors=() f t rc failed=0 log
+    [[ $KB_TEST == yes ]] || dotest=0
+    while (( $# )); do
+        case $1 in
+            --force) force=1 ;;
+            --no-test) dotest=0 ;;
+            stable|lts) flavors+=("$1") ;;
+            *) die "argomento sconosciuto: $1" ;;
+        esac
+        shift
+    done
+    (( ${#flavors[@]} )) || read -ra flavors <<<"$KB_FLAVORS"
+    [[ $EUID -ne 0 ]] || die "non eseguire come root (usa l'utente del servizio, es. arcbuild)"
+    for t in curl git make gcc bc flex bison bsdtar zstd xz gpg fakeroot depmod python3; do
+        command -v "$t" >/dev/null || die "$t non trovato (vedi install.sh)"
+    done
+    if (( dotest )); then
+        for t in qemu-system-x86_64 qemu-img; do command -v "$t" >/dev/null || die "$t non trovato"; done
+    fi
+    mkdir -p "$KB_WORKDIR/logs" "$REPO_ARCH_DIR"
+    exec 9> "$KB_WORKDIR/lock"
+    flock -n 9 || die "un'altra build è già in corso"
+    sync_src
+    for f in "${flavors[@]}"; do
+        log=$KB_WORKDIR/logs/$(date +%Y%m%d-%H%M%S)-$(flavor_pkg "$f").log
+        set +o errexit
+        KB_SRC=$SRC "$0" _flavor "$f" "$force" "$dotest" 2>&1 | tee "$log"
+        rc=${PIPESTATUS[0]}
+        set -o errexit
+        case $rc in
+            0)  ;;
+            10) rm -f "$log" ;;
+            3)  failed=$((failed + 1)) ;;
+            *)  failed=$((failed + 1))
+                tg_doc "$log" "Log di $(flavor_pkg "$f") ($(hostname))" ;;
+        esac
+    done
+    # Log più vecchi di 60 giorni
+    find "$KB_WORKDIR/logs" -type f -mtime +60 -delete 2>/dev/null || :
+    (( failed == 0 )) || die "$failed kernel non pubblicati"
+}
+
+cmd_check() {
+    local f pkgname up ver pub
+    sync_src
+    printf '%-20s %-14s %-14s %s\n' PACCHETTO PUBBLICATO KERNEL.ORG STATO
+    for f in $KB_FLAVORS; do
+        pkgname=$(flavor_pkg "$f")
+        up=$(upstream "$f"); ver=${up%% *}
+        pub=$(published "$pkgname")
+        if [[ -z $pub ]]; then
+            printf '%-20s %-14s %-14s %s\n' "$pkgname" - "$ver" "da compilare"
+        else
+            read -r pv pr ph _ <<<"$pub"
+            local st=aggiornato
+            [[ $(vercmp "$ver" "$pv") == 1 ]] && st="da aggiornare"
+            [[ $st == aggiornato && $ph != "$(confhash "$f")" ]] && st="config cambiata"
+            printf '%-20s %-14s %-14s %s\n' "$pkgname" "$pv-$pr" "$ver" "$st"
+        fi
+    done
+}
+
+cmd_notify_test() {
+    [[ -n $KB_TELEGRAM_TOKEN && -n $KB_TELEGRAM_CHAT ]] || die "KB_TELEGRAM_TOKEN e KB_TELEGRAM_CHAT non impostati in $KB_ENV"
+    tg_msg "👋 <b>arcbase-kbuild</b> su $(hostname): le notifiche funzionano"
+    msg "messaggio inviato (controlla Telegram)"
+}
+
+case ${1:-} in
+    run)         shift; cmd_run "$@" ;;
+    check)       shift; cmd_check ;;
+    setup-vm)    shift; cmd_setup_vm "$@" ;;
+    key)         shift; cmd_key "$@" ;;
+    repo)        shift; mkdir -p "$KB_WORKDIR"; cmd_repo ;;
+    notify-test) cmd_notify_test ;;
+    _package)    shift; cmd__package "$@" ;;
+    _flavor)     shift; cmd__flavor "$@" ;;
+    *) sed -n '3,/^# =====/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; exit 2 ;;
+esac

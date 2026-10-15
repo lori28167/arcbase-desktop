@@ -1,0 +1,103 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-kernel-mirror — collega il sistema al mirror dei kernel Arcbase
+#
+#  Il mirror (vedi tools/kernel-mirror, di solito su un server di casa)
+#  pubblica il repository pacman [arcbase-kernel] con:
+#    linux-arcbase       ultimo kernel stabile di kernel.org
+#    linux-lts-arcbase   ultimo kernel longterm (LTS)
+#  compilati con la configurazione di Arcbase e provati in QEMU prima della
+#  pubblicazione. I due pacchetti possono convivere: GRUB li elenca entrambi.
+#
+#  Uso:
+#    sudo arcbase-kernel-mirror enable http://server:8080 [--no-key]
+#    sudo arcbase-kernel-mirror disable
+#    arcbase-kernel-mirror status
+#
+#  enable scarica la chiave pubblica del mirror (<url>/arcbase-kernel/
+#  arcbase-kernel.asc), ne mostra l'impronta e la aggiunge al portachiavi di
+#  pacman; --no-key accetta pacchetti non firmati (sconsigliato).
+#  Poi: sudo pacman -Sy linux-arcbase   (oppure linux-lts-arcbase)
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+REPO=arcbase-kernel
+PACMAN_CONF=${ARC_PACMAN_CONF:-/etc/pacman.conf}
+BEGIN="# >>> $REPO (arcbase-kernel-mirror)"
+END="# <<< $REPO"
+
+die() { printf '==> ERRORE: %s\n' "$*" >&2; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || die "serve root: sudo $0 $*"; }
+
+strip_section() {  # rimuove la sezione gestita da questo script
+    sed -i "/^$BEGIN\$/,/^$END\$/d" "$PACMAN_CONF"
+}
+
+cmd_enable() {
+    local url='' key=1 fpr siglevel
+    while (( $# )); do
+        case $1 in
+            --no-key) key=0 ;;
+            -*) die "opzione sconosciuta: $1" ;;
+            *) url=${1%/} ;;
+        esac
+        shift
+    done
+    [[ $url == http://* || $url == https://* || $url == file://* ]] || die "uso: $0 enable <url del mirror> [--no-key]"
+    need_root enable
+
+    curl -fsS -o /dev/null "$url/$REPO/x86_64/$REPO.db" || die "$url non risponde o non è un mirror dei kernel Arcbase"
+    if (( key )); then
+        tmp=$(mktemp)
+        trap 'rm -f "$tmp"' EXIT   # tmp globale: la trap gira all'uscita dello script
+        curl -fsS -o "$tmp" "$url/$REPO/$REPO.asc" || die "chiave $url/$REPO/$REPO.asc non trovata (oppure usare --no-key)"
+        fpr=$(gpg --batch --with-colons --import-options show-only --import "$tmp" 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}')
+        [[ -n $fpr ]] || die "la chiave scaricata non è valida"
+        echo "Chiave del mirror: $fpr"
+        echo "Confrontala con quella mostrata da 'arcbase-kbuild key' sul server."
+        pacman-key --add "$tmp" >/dev/null
+        pacman-key --lsign-key "$fpr" >/dev/null
+        siglevel='Required'
+    else
+        echo "ATTENZIONE: pacchetti del kernel accettati senza firma" >&2
+        siglevel='Optional TrustAll'
+    fi
+
+    strip_section
+    cat >> "$PACMAN_CONF" <<EOF
+$BEGIN
+[$REPO]
+SigLevel = $siglevel
+Server = $url/$REPO/\$arch
+$END
+EOF
+    pacman -Sy
+    echo
+    pacman -Sl "$REPO" || :
+    echo
+    echo "Installa un kernel con: sudo pacman -S linux-arcbase   (o linux-lts-arcbase)"
+}
+
+cmd_disable() {
+    need_root disable
+    strip_section
+    echo "[$REPO] rimosso da $PACMAN_CONF (i kernel installati restano)"
+}
+
+cmd_status() {
+    if grep -qx "$BEGIN" "$PACMAN_CONF"; then
+        sed -n "/^$BEGIN\$/,/^$END\$/p" "$PACMAN_CONF" | grep -E '^(Server|SigLevel)'
+    else
+        echo "mirror dei kernel non configurato"
+    fi
+    echo "Kernel in /boot:"
+    find /boot -maxdepth 1 -name 'vmlinuz-*' -printf '  %f\n' | sort -V
+    pacman -Q linux-arcbase linux-lts-arcbase 2>/dev/null || :
+}
+
+case ${1:-} in
+    enable)  shift; cmd_enable "$@" ;;
+    disable) cmd_disable ;;
+    status)  cmd_status ;;
+    *) sed -n '3,/^# =====/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; exit 2 ;;
+esac

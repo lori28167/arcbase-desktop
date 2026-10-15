@@ -1,0 +1,23 @@
+# Opzioni del kernel che devono risultare =y dopo `make olddefconfig`:
+# senza di esse Arcbase (che non usa initramfs) non si avvia o perde funzioni
+# essenziali. Usato dallo stadio 09 e dal builder del mirror dei kernel.
+DEVTMPFS
+CGROUPS
+USER_NS
+EXT4_FS
+EFI_STUB
+BLK_DEV_NVME
+SATA_AHCI
+VIRTIO_BLK
+USB_STORAGE
+USB_UAS
+USB_XHCI_HCD
+MMC_BLOCK
+DRM
+BLK_DEV_INITRD
+BLK_DEV_LOOP
+BLK_DEV_SR
+ISO9660_FS
+SQUASHFS
+SQUASHFS_ZSTD
+OVERLAY_FS

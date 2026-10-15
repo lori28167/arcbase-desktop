@@ -1,0 +1,13 @@
+[Unit]
+Description=Arcbase: build e prova dei nuovi kernel (mirror)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=arcbuild
+Group=arcbuild
+ExecStart=/usr/local/bin/arcbase-kbuild run
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=8h

@@ -1,0 +1,39 @@
+# =============================================================================
+#  /etc/arcbase-kbuild.conf — configurazione di arcbase-kbuild
+#  Nessun segreto qui: il token del bot è in /etc/arcbase-kbuild.env.
+# =============================================================================
+
+# --- Telegram -------------------------------------------------------------------
+# Token e chat stanno in /etc/arcbase-kbuild.env (permessi 600), non qui.
+# yes = avvisa anche quando non c'è niente da aggiornare
+KB_NOTIFY_NOOP=no
+
+# --- Kernel ---------------------------------------------------------------------
+# stable -> linux-arcbase, lts -> linux-lts-arcbase
+KB_FLAVORS="stable lts"
+# Processi di compilazione (default: tutti i core)
+#KB_JOBS=8
+
+# --- Repository -----------------------------------------------------------------
+# Servito via HTTP da arcbase-kmirror-http.service (porta 8080)
+KB_REPO_DIR=/srv/arcbase-mirror
+# Versioni tenute per ogni pacchetto (per tornare indietro: pacman -U <url>)
+KB_KEEP=3
+# Chiave GPG di firma: vuoto = quella creata con 'arcbase-kbuild key --generate'
+#KB_GPG_KEY=
+
+# --- Sorgenti di Arcbase (config/kernel/arcbase.config) ---------------------------
+KB_GIT_URL=https://github.com/lori28167/arcbase-desktop.git
+KB_GIT_BRANCH=main
+
+# --- Prova in QEMU ---------------------------------------------------------------
+# no = pubblica senza provare (sconsigliato)
+KB_TEST=yes
+KB_TEST_MEM=4G
+KB_TEST_CPUS=4
+# Password di root/tester nella VM di prova (solo locale, nessuna rete esterna)
+KB_VM_PASSWORD=arcbase-kbuild
+# ISO usata da 'arcbase-kbuild setup-vm' (vuoto = ultima release su GitHub)
+#KB_ISO=/srv/iso/arcbase-desktop-1.1-x86_64.iso
+
+KB_WORKDIR=/var/lib/arcbase-kbuild

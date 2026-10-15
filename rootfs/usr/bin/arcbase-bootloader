@@ -7,6 +7,7 @@
 #                       [--removable] [--no-bios] [--cmdline "quiet ..."]
 #
 #  Arcbase non usa initramfs: il kernel monta / tramite root=PARTUUID=...
+#  Il menu di GRUB lo scrive arcbase-grub-cfg (impostazioni: /etc/arcbase/boot.conf).
 # =============================================================================
 set -o errexit -o nounset -o pipefail
 
@@ -62,37 +63,27 @@ if [[ -n $esp ]]; then
 fi
 if (( bios )); then
     echo "==> GRUB BIOS (i386-pc) su $disk"
-    grub-install --target=i386-pc "$disk" || echo "GRUB BIOS non installato (manca la partizione BIOS boot?)" >&2
+    if ! grub-install --target=i386-pc "$disk"; then
+        echo "GRUB BIOS non installato: serve una partizione 'BIOS boot' (GPT) su $disk," >&2
+        echo "oppure usare --no-bios per un'installazione solo UEFI" >&2
+        exit 1
+    fi
 fi
 
 echo "==> /boot/grub/grub.cfg"
-mkdir -p /boot/grub
-cat > /boot/grub/grub.cfg <<EOF
-# Arcbase Desktop — generato da arcbase-bootloader
-set default=0
-set timeout=5
-
-insmod part_gpt
-insmod ext2
-insmod all_video
-insmod gfxterm
-set gfxmode=auto
-terminal_output gfxterm
-
-search --no-floppy --fs-uuid --set=root $ROOT_UUID
-
-menuentry "Arcbase Desktop" {
-    linux /boot/$kernel root=PARTUUID=$ROOT_PARTUUID ro rootwait $cmdline
-}
-
-menuentry "Arcbase Desktop (modalità testo, ripristino)" {
-    linux /boot/$kernel root=PARTUUID=$ROOT_PARTUUID ro rootwait systemd.unit=multi-user.target
-}
-
-if [ "\$grub_platform" = "efi" ]; then
-    menuentry "Impostazioni firmware UEFI" {
-        fwsetup
-    }
+# Impostazioni lette da arcbase-grub-cfg anche ai successivi aggiornamenti
+# del kernel (hook di pacman)
+mkdir -p /etc/arcbase
+DEFAULT_KERNEL=''
+if [[ -r /etc/arcbase/boot.conf ]]; then
+    DEFAULT_KERNEL=$(sed -n 's/^DEFAULT_KERNEL=//p' /etc/arcbase/boot.conf | tail -n1)
 fi
-EOF
+{
+    echo "# Arcbase Desktop — impostazioni di avvio (scritto da arcbase-bootloader)"
+    echo "# Dopo una modifica: sudo arcbase-grub-cfg"
+    printf 'ROOT_UUID=%s\nROOT_PARTUUID=%s\nCMDLINE=%q\n' "$ROOT_UUID" "$ROOT_PARTUUID" "$cmdline"
+    echo "# Kernel predefinito (glob sulla versione, es. '*-lts'); vuoto = il più recente"
+    printf 'DEFAULT_KERNEL=%s\n' "$DEFAULT_KERNEL"
+} > /etc/arcbase/boot.conf
+arcbase-grub-cfg
 echo "==> bootloader installato (kernel: $kernel)"

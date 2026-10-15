@@ -42,7 +42,7 @@ rm -f "$IMG"
 truncate -s "$ARC_IMAGE_SIZE" "$IMG"
 sfdisk --quiet "$IMG" <<EOF
 label: gpt
-size=1MiB,   type=21686148-6453-6F6E-6F74-746F6E656564, name="bios"
+size=1MiB,   type=21686148-6449-6E6F-744E-656564454649, name="bios"
 size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="esp"
              type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709, name="arcbase"
 EOF

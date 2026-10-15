@@ -1,0 +1,275 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-install — installa Arcbase Desktop dalla sessione live su un disco
+#
+#  Il disco scelto viene CANCELLATO e partizionato in GPT:
+#    1. BIOS boot (1 MiB)   2. ESP FAT32 (512 MiB)   3. root ext4 (resto)
+#  Il sistema viene copiato dallo squashfs della live (non dall'overlay: le
+#  modifiche fatte nella sessione live non finiscono sul disco), poi si
+#  configurano nome host, utente, password, fuso orario e tastiera e si
+#  installa GRUB per BIOS e UEFI con arcbase-bootloader.
+#
+#  Uso: sudo arcbase-install                    (interattivo, menu whiptail)
+#       sudo arcbase-install --disk /dev/sdX --yes [opzioni]
+#  Opzioni:
+#    --disk DEV            disco di destinazione (verrà cancellato)
+#    --hostname NOME       nome host                    (default: arcbase)
+#    --user NOME           utente desktop               (default: arc)
+#    --fullname "NOME"     nome completo dell'utente
+#    --password PW         password dell'utente
+#    --root-password PW    password di root (vuota = account root bloccato)
+#    --timezone ZONA       es. Europe/Rome              (default: quello della live)
+#    --keymap MAPPA        tastiera console e desktop   (default: us)
+#    --cmdline "OPZ"       opzioni del kernel           (default: quiet)
+#    --source DIR          sistema da copiare           (default: squashfs della live)
+#    --yes                 non chiede conferma prima di cancellare il disco
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+SOURCE=/run/arcbase-live/sfs
+TARGET=/mnt/arcbase-install
+LIVE_USER=arc
+
+disk='' hostname='' user='' fullname='' password='' root_password='' root_password_set=0
+timezone='' keymap='' cmdline='quiet' yes=0
+while (( $# )); do
+    case $1 in
+        --disk)          disk=$2; shift ;;
+        --hostname)      hostname=$2; shift ;;
+        --user)          user=$2; shift ;;
+        --fullname)      fullname=$2; shift ;;
+        --password)      password=$2; shift ;;
+        --root-password) root_password=$2; root_password_set=1; shift ;;
+        --timezone)      timezone=$2; shift ;;
+        --keymap)        keymap=$2; shift ;;
+        --cmdline)       cmdline=$2; shift ;;
+        --source)        SOURCE=$2; shift ;;
+        --yes)           yes=1 ;;
+        -h|--help)       sed -n '3,/^# =====/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "opzione sconosciuta: $1 (vedi --help)" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+msg()  { printf '\e[1;32m==>\e[0m \e[1m%s\e[0m\n' "$*"; }
+die()  { printf '\e[1;31m==> ERRORE:\e[0m %s\n' "$*" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "serve root: sudo arcbase-install"
+[[ -d $SOURCE/usr/bin && -d $SOURCE/etc ]] || die "$SOURCE non contiene un sistema (l'installer va avviato dalla ISO live)"
+
+# Interfaccia: whiptail se c'è un terminale, altrimenti domande semplici
+ui=plain
+[[ -t 0 && -t 1 ]] && command -v whiptail >/dev/null && ui=whiptail
+TITLE="Installazione di Arcbase Desktop"
+
+ask() {  # ask <domanda> <default> [password]
+    local q=$1 def=$2 secret=${3:-} ans
+    if [[ $ui == whiptail ]]; then
+        if [[ -n $secret ]]; then
+            ans=$(whiptail --title "$TITLE" --passwordbox "$q" 10 70 3>&1 1>&2 2>&3) || die "installazione annullata"
+        else
+            ans=$(whiptail --title "$TITLE" --inputbox "$q" 10 70 "$def" 3>&1 1>&2 2>&3) || die "installazione annullata"
+        fi
+    else
+        if [[ -n $secret ]]; then read -r -s -p "$q: " ans; echo >&2
+        else read -r -p "$q [$def]: " ans; fi
+    fi
+    printf '%s\n' "${ans:-$def}"
+}
+
+ask_password() {  # ask_password <per chi> <ammetti vuota>
+    local p1 p2
+    while :; do
+        p1=$(ask "Password per $1${2:+ (vuota = account bloccato)}" '' secret)
+        [[ -z $p1 && -n $2 ]] && { printf '\n'; return; }
+        [[ -n $p1 ]] || { echo "la password non può essere vuota" >&2; continue; }
+        p2=$(ask "Ripeti la password per $1" '' secret)
+        [[ $p1 == "$p2" ]] && { printf '%s\n' "$p1"; return; }
+        if [[ $ui == whiptail ]]; then
+            whiptail --title "$TITLE" --msgbox "Le password non coincidono." 8 50 >/dev/tty
+        else
+            echo "le password non coincidono" >&2
+        fi
+    done
+}
+
+# --- Disco di destinazione -------------------------------------------------------
+# Il disco da cui gira la live non si può scegliere
+live_disk=''
+if src=$(findmnt -no SOURCE /run/arcbase-live/medium 2>/dev/null); then
+    live_disk=$(lsblk -ndo PKNAME "$src" 2>/dev/null || :)
+    live_disk=/dev/${live_disk:-${src#/dev/}}
+fi
+
+candidates() {
+    lsblk -dpno NAME,SIZE,TYPE,RO,MODEL | while read -r name size type ro model; do
+        [[ $type == disk && $ro == 0 && $name != "$live_disk" && $name != /dev/zram* ]] || continue
+        printf '%s\t%s\t%s\n' "$name" "$size" "${model:-disco}"
+    done
+}
+
+if [[ -z $disk ]]; then
+    mapfile -t list < <(candidates)
+    (( ${#list[@]} )) || die "nessun disco disponibile per l'installazione"
+    if [[ $ui == whiptail ]]; then
+        items=()
+        for l in "${list[@]}"; do IFS=$'\t' read -r n s m <<<"$l"; items+=("$n" "$s  $m"); done
+        disk=$(whiptail --title "$TITLE" --menu "Disco su cui installare (verrà CANCELLATO):" 16 72 8 \
+               "${items[@]}" 3>&1 1>&2 2>&3) || die "installazione annullata"
+    else
+        echo "Dischi disponibili:"; printf '  %s\n' "${list[@]}"
+        disk=$(ask "Disco su cui installare (verrà CANCELLATO)" "${list[0]%%$'\t'*}")
+    fi
+fi
+[[ -b $disk ]] || die "$disk non è un disco"
+[[ $(lsblk -dno TYPE "$disk") == disk ]] || die "$disk non è un disco intero (indicare es. /dev/sda, non /dev/sda1)"
+[[ $disk != "$live_disk" ]] || die "$disk è il supporto da cui gira la live"
+size_bytes=$(lsblk -bdno SIZE "$disk")
+(( size_bytes >= 20 * 1024 ** 3 )) || die "$disk è troppo piccolo: servono almeno 20 GB"
+
+# --- Impostazioni ------------------------------------------------------------------
+cur_tz=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||') || :
+setting() {  # setting <variabile> <domanda> <default>: chiede solo se non data
+    [[ -n ${!1} ]] && return
+    if (( yes )); then printf -v "$1" '%s' "$3"
+    else printf -v "$1" '%s' "$(ask "$2" "$3")"; fi
+}
+setting hostname "Nome del computer" arcbase
+setting user     "Nome utente" "$LIVE_USER"
+setting fullname "Nome completo" "Arcbase User"
+setting timezone "Fuso orario" "${cur_tz:-UTC}"
+setting keymap   "Tastiera (us, it, de, fr, es, ...)" us
+[[ -n $password ]] || { (( yes )) && die "--password è obbligatoria con --yes"; password=$(ask_password "$user"); }
+if (( ! root_password_set && ! yes )); then
+    root_password=$(ask_password root vuota)
+fi
+
+[[ $hostname =~ ^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$ ]] || die "nome host non valido: $hostname"
+[[ $user =~ ^[a-z_][a-z0-9_-]{0,31}$ && $user != root ]] || die "nome utente non valido: $user"
+[[ -f $SOURCE/usr/share/zoneinfo/$timezone ]] || die "fuso orario sconosciuto: $timezone"
+[[ $keymap =~ ^[a-zA-Z0-9_-]+$ ]] || die "tastiera non valida: $keymap"
+
+summary="Disco:        $disk ($(lsblk -dno SIZE "$disk"), $(lsblk -dno MODEL "$disk" | xargs))
+Nome host:    $hostname
+Utente:       $user ($fullname)
+Root:         $([[ -n $root_password ]] && echo "password impostata" || echo "bloccato (si usa sudo)")
+Fuso orario:  $timezone
+Tastiera:     $keymap
+
+TUTTI I DATI SU $disk VERRANNO CANCELLATI."
+if (( ! yes )); then
+    if [[ $ui == whiptail ]]; then
+        whiptail --title "$TITLE" --defaultno --yes-button "Installa" --no-button "Annulla" \
+                 --yesno "$summary" 18 72 || die "installazione annullata"
+    else
+        printf '\n%s\n\n' "$summary"
+        [[ $(ask "Scrivi SI per continuare" '') == SI ]] || die "installazione annullata"
+    fi
+fi
+
+# --- Partizionamento ----------------------------------------------------------------
+part() { if [[ $disk =~ [0-9]$ ]]; then echo "${disk}p$1"; else echo "${disk}$1"; fi; }
+cleanup() {
+    set +o errexit
+    local m
+    for m in run sys/firmware/efi/efivars sys proc dev/pts dev boot/efi ''; do
+        mountpoint -q "$TARGET/$m" && { umount "$TARGET/$m" || umount -l "$TARGET/$m"; }
+    done
+}
+trap cleanup EXIT
+
+msg "Partizionamento di $disk"
+for p in $(lsblk -lnpo NAME "$disk" | tail -n +2); do
+    mountpoint -q "$p" 2>/dev/null && umount "$p"
+    swapoff "$p" 2>/dev/null || :
+done
+wipefs -a -q "$disk"
+sfdisk --quiet --wipe always "$disk" <<EOF
+label: gpt
+size=1MiB,   type=21686148-6449-6E6F-744E-656564454649, name="bios"
+size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="esp"
+             type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709, name="arcbase"
+EOF
+partprobe "$disk" 2>/dev/null || :
+udevadm settle 2>/dev/null || sleep 2
+ESP=$(part 2) ROOT=$(part 3)
+for _ in 1 2 3 4 5 6 7 8 9 10; do [[ -b $ESP && -b $ROOT ]] && break; sleep 1; done
+[[ -b $ESP && -b $ROOT ]] || die "partizioni $ESP / $ROOT non comparse"
+
+msg "Formattazione"
+mkfs.vfat -F 32 -n ARCBASE_EFI "$ESP" >/dev/null
+mkfs.ext4 -q -F -L arcbase "$ROOT"
+
+mkdir -p "$TARGET"
+mount "$ROOT" "$TARGET"
+mkdir -p "$TARGET/boot/efi"
+mount "$ESP" "$TARGET/boot/efi"
+
+# --- Copia del sistema ---------------------------------------------------------------
+msg "Copia del sistema ($(du -sh --apparent-size "$SOURCE" 2>/dev/null | cut -f1), qualche minuto)"
+# squashfs risponde "non supportato" alla lettura degli xattr dei file che non
+# ne hanno: tar lo segnala come avviso, che qui è solo rumore
+tar -C "$SOURCE" -cpf - --xattrs --acls --numeric-owner . 2> >(grep -v 'listxattr' >&2) \
+  | tar -C "$TARGET" -xpf - --xattrs --acls --numeric-owner
+sync
+
+# --- Configurazione ------------------------------------------------------------------
+msg "Configurazione"
+in_target() { chroot "$TARGET" /usr/bin/env -i PATH=/usr/bin HOME=/root LANG=C "$@"; }
+mount --bind /dev "$TARGET/dev"
+mount -t devpts devpts "$TARGET/dev/pts"
+mount -t proc proc "$TARGET/proc"
+mount -t sysfs sysfs "$TARGET/sys"
+# efivarfs serve a efibootmgr per scrivere la voce di avvio nella NVRAM
+[[ -d /sys/firmware/efi/efivars ]] && mount -t efivarfs efivarfs "$TARGET/sys/firmware/efi/efivars"
+mount -t tmpfs tmpfs "$TARGET/run"
+
+# Solo la live: lanciatori dell'installer
+rm -f "$TARGET/usr/share/applications/arcbase-install.desktop"
+find "$TARGET/home" "$TARGET/etc/skel" -name arcbase-install.desktop -delete 2>/dev/null || :
+: > "$TARGET/etc/machine-id"
+
+echo "$hostname" > "$TARGET/etc/hostname"
+sed -i "s/^127\.0\.1\.1.*/127.0.1.1  $hostname/" "$TARGET/etc/hosts"
+ln -sfn "/usr/share/zoneinfo/$timezone" "$TARGET/etc/localtime"
+
+sed -i "s/^KEYMAP=.*/KEYMAP=$keymap/" "$TARGET/etc/vconsole.conf"
+mkdir -p "$TARGET/etc/X11/xorg.conf.d"
+cat > "$TARGET/etc/X11/xorg.conf.d/00-keyboard.conf" <<EOF
+Section "InputClass"
+        Identifier "system-keyboard"
+        MatchIsKeyboard "on"
+        Option "XkbLayout" "$keymap"
+EndSection
+EOF
+# Plasma (Wayland) legge il layout da kxkbrc, non dalla configurazione X11
+mkdir -p "$TARGET/etc/xdg"
+printf '[Layout]\nLayoutList=%s\nUse=true\n' "$keymap" > "$TARGET/etc/xdg/kxkbrc"
+
+if [[ $user != "$LIVE_USER" ]]; then
+    in_target usermod -l "$user" -d "/home/$user" -m "$LIVE_USER"
+    in_target groupmod -n "$user" "$LIVE_USER"
+fi
+in_target usermod -c "$fullname" "$user"
+printf '%s:%s\n' "$user" "$password" | in_target chpasswd
+if [[ -n $root_password ]]; then
+    printf 'root:%s\n' "$root_password" | in_target chpasswd
+else
+    in_target passwd -l root >/dev/null
+fi
+
+# --- Bootloader ----------------------------------------------------------------------
+msg "Installazione di GRUB"
+if [[ -d /sys/firmware/efi/efivars ]]; then
+    # Avviati in UEFI: voce nella NVRAM e, per sicurezza, anche il percorso di
+    # fallback \EFI\BOOT\BOOTX64.EFI (alcuni firmware dimenticano le voci)
+    in_target arcbase-bootloader --disk "$disk" --root "$ROOT" --esp "$ESP" --cmdline "$cmdline"
+    in_target grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --no-nvram
+else
+    in_target arcbase-bootloader --disk "$disk" --root "$ROOT" --esp "$ESP" --removable --cmdline "$cmdline"
+fi
+
+cleanup
+trap - EXIT
+msg "Installazione completata su $disk"
+echo "Rimuovi il supporto della live e riavvia il computer."

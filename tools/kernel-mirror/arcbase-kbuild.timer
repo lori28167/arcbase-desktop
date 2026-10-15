@@ -1,0 +1,10 @@
+[Unit]
+Description=Arcbase: controllo giornaliero dei nuovi kernel
+
+[Timer]
+OnCalendar=*-*-* 03:30
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

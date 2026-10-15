@@ -1,0 +1,112 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-grub-cfg — rigenera /boot/grub/grub.cfg con tutti i kernel in /boot
+#
+#  Il kernel predefinito è il più recente (o il primo che corrisponde a
+#  DEFAULT_KERNEL); gli altri finiscono nel sottomenu "Altri kernel".
+#  Viene chiamato da arcbase-bootloader e, dopo ogni installazione o rimozione
+#  di un kernel (linux-arcbase, linux-lts-arcbase), dall'hook di pacman.
+#
+#  Impostazioni in /etc/arcbase/boot.conf (scritto da arcbase-bootloader):
+#    ROOT_UUID=...  ROOT_PARTUUID=...  CMDLINE="quiet"
+#    DEFAULT_KERNEL="*-lts"     (facoltativo: glob sulla versione del kernel)
+#  Senza boot.conf (installazioni precedenti) i valori vengono letti dal
+#  grub.cfg esistente.
+#
+#  Uso: arcbase-grub-cfg [--hook]
+#    --hook   se non c'è un sistema installato da aggiornare (sessione live,
+#             chroot di build) esce senza errori
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+BOOT=${ARC_BOOT_DIR:-/boot}
+CONF=${ARC_BOOT_CONF:-/etc/arcbase/boot.conf}
+CFG=$BOOT/grub/grub.cfg
+
+hook=0
+case ${1:-} in
+    --hook) hook=1 ;;
+    '') ;;
+    *) echo "uso: $0 [--hook]" >&2; exit 2 ;;
+esac
+
+skip() { (( hook )) && { echo "arcbase-grub-cfg: $* — salto" >&2; exit 0; }; echo "arcbase-grub-cfg: $*" >&2; exit 1; }
+
+if (( hook )) && [[ $(findmnt -no FSTYPE / 2>/dev/null) == overlay ]]; then
+    skip "sessione live"
+fi
+
+ROOT_UUID='' ROOT_PARTUUID='' CMDLINE='quiet' DEFAULT_KERNEL=''
+if [[ -r $CONF ]]; then
+    # shellcheck source=/dev/null
+    . "$CONF"
+elif [[ -r $CFG ]]; then
+    ROOT_UUID=$(sed -n 's/^search .*--set=root \([^ ]*\)$/\1/p' "$CFG" | head -n1)
+    line=$(grep -m1 '^ *linux ' "$CFG" || :)
+    ROOT_PARTUUID=$(sed -n 's/.*root=PARTUUID=\([^ ]*\).*/\1/p' <<<"$line")
+    CMDLINE=$(sed -n 's/.* rootwait *//p' <<<"$line")
+fi
+[[ -n $ROOT_UUID && -n $ROOT_PARTUUID ]] || skip "$CONF mancante e nessun grub.cfg da cui leggere la root"
+
+mapfile -t kernels < <(find "$BOOT" -maxdepth 1 -name 'vmlinuz-*' -printf '%f\n' | sort -V -r)
+(( ${#kernels[@]} )) || skip "nessun kernel in $BOOT"
+
+default=${kernels[0]}
+if [[ -n $DEFAULT_KERNEL ]]; then
+    for k in "${kernels[@]}"; do
+        # shellcheck disable=SC2053  # DEFAULT_KERNEL è un glob voluto
+        if [[ ${k#vmlinuz-} == $DEFAULT_KERNEL ]]; then default=$k; break; fi
+    done
+fi
+
+entry() {  # entry <titolo> <kernel> <opzioni> [rientro]
+    printf '%smenuentry "%s" {\n%s    linux /boot/%s root=PARTUUID=%s ro rootwait %s\n%s}\n' \
+        "${4:-}" "$1" "${4:-}" "$2" "$ROOT_PARTUUID" "$3" "${4:-}"
+}
+
+mkdir -p "$BOOT/grub"
+tmp=$(mktemp "$BOOT/grub/.grub.cfg.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+{
+    cat <<EOF
+# Arcbase Desktop — generato da arcbase-grub-cfg: non modificare a mano,
+# le opzioni del kernel si cambiano in $CONF
+set default=0
+set timeout=5
+
+insmod part_gpt
+insmod ext2
+insmod all_video
+insmod gfxterm
+set gfxmode=auto
+terminal_output gfxterm
+
+search --no-floppy --fs-uuid --set=root $ROOT_UUID
+
+EOF
+    entry "Arcbase Desktop (Linux ${default#vmlinuz-})" "$default" "$CMDLINE"
+    echo
+    entry "Arcbase Desktop (Linux ${default#vmlinuz-}, modalità testo, ripristino)" "$default" "systemd.unit=multi-user.target"
+    if (( ${#kernels[@]} > 1 )); then
+        echo
+        echo 'submenu "Altri kernel" {'
+        for k in "${kernels[@]}"; do
+            [[ $k == "$default" ]] && continue
+            entry "Arcbase Desktop (Linux ${k#vmlinuz-})" "$k" "$CMDLINE" '    '
+            entry "Arcbase Desktop (Linux ${k#vmlinuz-}, ripristino)" "$k" "systemd.unit=multi-user.target" '    '
+        done
+        echo '}'
+    fi
+    cat <<'EOF'
+
+if [ "$grub_platform" = "efi" ]; then
+    menuentry "Impostazioni firmware UEFI" {
+        fwsetup
+    }
+fi
+EOF
+} > "$tmp"
+chmod 644 "$tmp"
+mv -f "$tmp" "$CFG"
+trap - EXIT
+echo "==> $CFG: avvio predefinito ${default#vmlinuz-} (${#kernels[@]} kernel)"

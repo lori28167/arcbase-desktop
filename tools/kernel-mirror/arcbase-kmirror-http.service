@@ -1,0 +1,19 @@
+[Unit]
+Description=Arcbase: mirror dei kernel via HTTP (porta 8080)
+After=network.target
+
+[Service]
+# Server statico in sola lettura; per cambiare porta:
+#   systemctl edit arcbase-kmirror-http  ->  Environment=PORT=8081
+Environment=PORT=8080
+ExecStart=/usr/bin/python3 -m http.server ${PORT} --directory /srv/arcbase-mirror
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/srv/arcbase-mirror
+PrivateTmp=yes
+NoNewPrivileges=yes
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

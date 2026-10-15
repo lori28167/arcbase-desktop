@@ -18,11 +18,11 @@ VERSION="$ARC_VERSION ($ARC_CODENAME)"
 VERSION_ID=$ARC_VERSION
 VERSION_CODENAME=$ARC_CODENAME
 BUILD_ID=lfs-$LFS_BOOK_VERSION
-ANSI_COLOR="38;2;23;147;209"
+ANSI_COLOR="38;2;140;82;255"
 HOME_URL="$ARC_HOME_URL"
 DOCUMENTATION_URL="$ARC_HOME_URL#readme"
 BUG_REPORT_URL="$ARC_HOME_URL/issues"
-LOGO=distributor-logo
+LOGO=arcbase-logo
 EOF
     ln -sfv ../usr/lib/os-release /etc/os-release
     cat > /etc/lsb-release <<EOF

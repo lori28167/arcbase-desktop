@@ -12,7 +12,7 @@ S     := scripts
 
 .PHONY: help all check prepare download toolchain temp-tools chroot-tools \
         base-system merge-usr config kernel package-managers desktop image \
-        iso iso-test enter umount lint test clean-stamps
+        iso iso-test install-test enter umount lint test clean-stamps
 
 help:
 	@echo "Arcbase Desktop — LFS + pacman (Arch) + apt (Debian)"
@@ -33,6 +33,7 @@ help:
 	@echo "  image             immagine disco avviabile in out/"
 	@echo "  iso               ISO live ibrida (BIOS+UEFI, CD/USB) in out/"
 	@echo "  iso-test          avvia la ISO in QEMU (BIOS e UEFI), senza root"
+	@echo "  install-test      installa dalla ISO su un disco virtuale e lo riavvia (QEMU)"
 	@echo
 	@echo "Altro:"
 	@echo "  all               tutti gli stadi in sequenza"
@@ -88,6 +89,9 @@ iso:
 iso-test:
 	$(S)/14-iso-test.sh
 
+install-test:
+	$(S)/15-install-test.sh
+
 enter:
 	$(S)/05-chroot.sh enter
 
@@ -98,12 +102,14 @@ lint:
 	shellcheck -x $(S)/*.sh $(S)/lib/common.sh $(S)/chroot/*.sh \
 	    rootfs/usr/bin/arc rootfs/usr/bin/arcbase-* \
 	    rootfs/usr/lib/arcbase/*.sh rootfs/usr/share/libalpm/scripts/* \
+	    tools/kernel-mirror/arcbase-kbuild tools/kernel-mirror/install.sh \
 	    tests/*.sh
 
 test:
 	tests/test-recipes.sh
 	tests/test-build-engine.sh
 	tests/test-arc.sh
+	tests/test-kernel-mirror.sh
 
 clean-stamps:
 	@source config/arcbase.conf && rm -rfv "$$LFS/sources/.arcbase-stamps"

@@ -45,6 +45,13 @@ lint_rule() {  # lint_rule <descrizione> <regex vietata>
 }
 lint_rule "tzdata: il file si chiama 'leapseconds'" 'zic -L leap-seconds'
 lint_rule "ricette rilanciabili: 'ln -s' sempre con -f" '^[[:space:]]+ln -s[a-eg-z]*[[:space:]]'
+hits=$(grep -rn '21686148-' "$REPO"/scripts "$REPO"/rootfs | grep -v '21686148-6449-6E6F-744E-656564454649' || :)
+if [[ -n $hits ]]; then
+    printf '  \e[31m✘\e[0m GUID della partizione BIOS boot errato\n      %s\n' "$hits"
+    fail=$((fail + 1))
+else
+    printf '  \e[32m✔\e[0m GUID della partizione BIOS boot\n'
+fi
 
 echo
 echo "Ricette verificate: $total, stadi falliti: $fail"

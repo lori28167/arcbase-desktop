@@ -85,6 +85,30 @@ EOF
 mkdir -p "$STAGING"/{dev,proc,sys,run,tmp}
 chmod 1777 "$STAGING/tmp"
 
+# Lanciatore dell'installer (solo nella live: arcbase-install lo rimuove dal
+# sistema installato), nel menu e sulla scrivania dell'utente live
+cat > "$STAGING/usr/share/applications/arcbase-install.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Installa Arcbase Desktop
+Name[en]=Install Arcbase Desktop
+Comment=Installa il sistema su un disco
+Comment[en]=Install the system to a disk
+Exec=konsole -e sudo arcbase-install
+Icon=system-software-install
+Terminal=false
+Categories=System;
+EOF
+home="$STAGING/home/$ARC_USER"
+if [[ -d $home ]]; then
+    desk=$(sed -n 's/^XDG_DESKTOP_DIR="$HOME\/\(.*\)"/\1/p' "$home/.config/user-dirs.dirs" 2>/dev/null)
+    desk="$home/${desk:-Desktop}"
+    owner=$(stat -c %u:%g "$home")
+    install -d -o "${owner%:*}" -g "${owner#*:}" "$desk"
+    install -m755 -o "${owner%:*}" -g "${owner#*:}" \
+        "$STAGING/usr/share/applications/arcbase-install.desktop" "$desk/"
+fi
+
 msg "Compressione dello squashfs (può richiedere diversi minuti)"
 mksquashfs "$STAGING" "$TREE/arcbase/rootfs.sfs" \
     -comp zstd -Xcompression-level 15 -b 1M -noappend -xattrs -no-progress
