@@ -1,0 +1,68 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-kbuild-ctl — azioni privilegiate per il bot Telegram (arcbase-kbot)
+#
+#  L'utente arcbuild lo può eseguire con sudo senza password (vedi
+#  /etc/sudoers.d/arcbase-kbuild) e nient'altro: ogni argomento è controllato.
+#
+#  Uso:
+#    arcbase-kbuild-ctl build [all|stable|lts][-force]   avvia una build ora
+#    arcbase-kbuild-ctl stop                              ferma la build in corso
+#    arcbase-kbuild-ctl schedule HH:MM                    orario della build notturna
+#    arcbase-kbuild-ctl schedule off|on                   sospende/riattiva il timer
+#
+#  Codici d'uscita: 0 ok, 2 argomenti non validi, 3 build già in corso,
+#  4 nessuna build in corso.
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+SYSTEMCTL=${ARC_SYSTEMCTL:-systemctl}
+UNITDIR=${ARC_UNITDIR:-/etc/systemd/system}
+TIMER=arcbase-kbuild.timer
+DROPIN=$UNITDIR/$TIMER.d/orario.conf
+
+die() { echo "$*" >&2; exit 2; }
+
+running() {  # stampa le unità di build attive
+    "$SYSTEMCTL" list-units --no-legend --plain --state=active,activating,deactivating \
+        'arcbase-kbuild.service' 'arcbase-kbuild-manual@*.service' | awk '{print $1}'
+}
+
+case ${1:-} in
+    build)
+        inst=${2:-all}
+        [[ $inst =~ ^(all|stable|lts)(-force)?$ ]] || die "build: atteso all|stable|lts, con -force facoltativo"
+        if [[ -n $(running) ]]; then echo "build già in corso: $(running | paste -sd' ')"; exit 3; fi
+        "$SYSTEMCTL" start --no-block "arcbase-kbuild-manual@$inst.service"
+        echo "avviata arcbase-kbuild-manual@$inst.service"
+        ;;
+    stop)
+        units=$(running)
+        [[ -n $units ]] || { echo "nessuna build in corso"; exit 4; }
+        # shellcheck disable=SC2086  # un'unità per parola
+        "$SYSTEMCTL" stop --no-block $units
+        echo "fermo: $units"
+        ;;
+    schedule)
+        when=${2:-}
+        case $when in
+            off) "$SYSTEMCTL" disable --now "$TIMER" >/dev/null 2>&1; echo "build notturna sospesa" ;;
+            on)  "$SYSTEMCTL" enable --now "$TIMER" >/dev/null 2>&1; echo "build notturna riattivata" ;;
+            *)
+                [[ $when =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die "schedule: atteso HH:MM (00:00-23:59), off oppure on"
+                mkdir -p "${DROPIN%/*}"
+                printf '# Scritto da arcbase-kbuild-ctl (comando /orario del bot)\n[Timer]\nOnCalendar=\nOnCalendar=*-*-* %s:00\nRandomizedDelaySec=0\n' \
+                    "$when" > "$DROPIN.tmp"
+                mv -f "$DROPIN.tmp" "$DROPIN"
+                "$SYSTEMCTL" daemon-reload
+                "$SYSTEMCTL" enable "$TIMER" >/dev/null 2>&1 || :
+                "$SYSTEMCTL" restart "$TIMER"
+                echo "build notturna alle $when"
+                ;;
+        esac
+        ;;
+    *)
+        sed -n '3,/^# =====/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//' >&2
+        exit 2
+        ;;
+esac

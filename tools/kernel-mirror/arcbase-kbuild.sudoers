@@ -1,0 +1,3 @@
+# Arcbase: il bot Telegram (utente arcbuild) può solo avviare/fermare le build
+# e cambiarne l'orario tramite questo helper, che controlla gli argomenti.
+arcbuild ALL=(root) NOPASSWD: /usr/local/sbin/arcbase-kbuild-ctl

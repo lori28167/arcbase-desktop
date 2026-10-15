@@ -6,6 +6,8 @@
 #   - arcbase-kbuild: pacchetto (con un finto albero del kernel), database del
 #     repository letto da pacman, pulizia delle versioni vecchie, firma,
 #     confronto con releases.json di kernel.org
+#   - arcbase-kbuild-ctl e il bot Telegram arcbase-kbot, con un finto Bot API
+#     e un finto systemctl
 #  Non richiede root né rete; i controlli con pacman si saltano se manca.
 # =============================================================================
 set -o nounset -o pipefail
@@ -161,6 +163,124 @@ EOF
 else
     echo "  (fakeroot o bsdtar non disponibili: test del pacchetto saltati)"
 fi
+
+# --- arcbase-kbuild-ctl e arcbase-kbot (bot Telegram) ---------------------------------------
+echo "arcbase-kbuild-ctl"
+CTLBIN=$REPO/tools/kernel-mirror/arcbase-kbuild-ctl
+# finto systemctl: registra le chiamate e simula timer e build in corso
+cat > "$T/systemctl" <<EOF
+#!/bin/bash
+echo "\$*" >> "$T/systemctl.log"
+case \$1 in
+    list-units) cat "$T/running" 2>/dev/null || : ;;
+    show)
+        case \$4 in
+            UnitFileState) cat "$T/timer-state" 2>/dev/null || echo enabled ;;
+            TimersCalendar) echo "{ OnCalendar=*-*-* 03:30:00 ; next_elapse=Fri 2026-10-16 03:30:00 CEST }" ;;
+            NextElapseUSecRealtime) echo "Fri 2026-10-16 03:30:00 CEST" ;;
+        esac ;;
+esac
+EOF
+chmod +x "$T/systemctl"
+export ARC_SYSTEMCTL=$T/systemctl ARC_UNITDIR=$T/units
+C() { "$CTLBIN" "$@" > "$T/ctl.out" 2>&1; }
+C build 'lts; reboot';                check "build: argomento non valido rifiutato"  test $? -eq 2
+C build lts-force;                    check "build lts-force avviata"               has "$T/systemctl.log" "start --no-block arcbase-kbuild-manual@lts-force.service"
+echo "arcbase-kbuild-manual@all.service loaded active running x" > "$T/running"
+C build;                              check "build rifiutata se già in corso (3)"    test $? -eq 3
+C stop;                               check "stop della build in corso"             has "$T/systemctl.log" "stop --no-block arcbase-kbuild-manual@all.service"
+rm -f "$T/running"
+C stop;                               check "stop senza build: codice 4"            test $? -eq 4
+C schedule 25:00;                     check "orario non valido rifiutato"           test $? -eq 2
+C schedule '04:00 ; rm -rf /';        check "orario con comandi rifiutato"          test $? -eq 2
+C schedule 04:15
+check "orario: drop-in del timer scritto"   grep -qx 'OnCalendar=\*-\*-\* 04:15:00' "$T/units/arcbase-kbuild.timer.d/orario.conf"
+check "orario: timer ricaricato"            has "$T/systemctl.log" "restart arcbase-kbuild.timer"
+C schedule off;                       check "orario off: timer disattivato"         has "$T/systemctl.log" "disable --now arcbase-kbuild.timer"
+
+echo "arcbase-kbot"
+TG=$T/tg; mkdir -p "$TG"
+# finto Bot API: getUpdates restituisce i messaggi di $TG/updates.json, le
+# risposte (sendMessage, setMyCommands) finiscono in $TG/sent.jsonl
+cat > "$T/fake-tg.py" <<'EOF'
+import http.server, json, sys, urllib.parse
+port, d = int(sys.argv[1]), sys.argv[2]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get('Content-Length', 0))
+        params = {k: v[0] for k, v in urllib.parse.parse_qs(self.rfile.read(n).decode()).items()}
+        method = self.path.rsplit('/', 1)[-1]
+        result = True
+        if method == 'getUpdates':
+            off = int(params.get('offset', 0))
+            with open(d + '/polls.log', 'a') as f:
+                f.write('timeout=%s\n' % params.get('timeout'))
+            result = [u for u in json.load(open(d + '/updates.json')) if u['update_id'] >= off]
+        else:
+            with open(d + '/sent.jsonl', 'a') as f:
+                f.write(json.dumps({'method': method, 'token_ok': '/botTOK/' in self.path, **params}) + '\n')
+        self.send_response(200); self.end_headers()
+        self.wfile.write(json.dumps({'ok': True, 'result': result}).encode())
+    def log_message(self, *a): pass
+http.server.ThreadingHTTPServer(('127.0.0.1', port), H).serve_forever()
+EOF
+port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')
+python3 "$T/fake-tg.py" "$port" "$TG" & tgpid=$!
+upd() {  # upd <chat> <testo>... : un messaggio per argomento
+    local chat=$1; shift
+    python3 -c '
+import json, sys
+chat, msgs = int(sys.argv[1]), sys.argv[2:]
+print(json.dumps([{"update_id": 100 + i, "message": {"chat": {"id": chat}, "text": t}} for i, t in enumerate(msgs)]))' \
+        "$chat" "$@" > "$TG/updates.json"
+}
+sent() { python3 -c 'import json,sys; [print(json.loads(l).get("text","")) for l in open(sys.argv[1]) if "sendMessage" in l]' "$TG/sent.jsonl"; }
+BOT() {
+    rm -f "$TG/sent.jsonl" "$KB_WORKDIR/state/bot-offset"
+    KB_TELEGRAM_TOKEN=TOK KB_TELEGRAM_CHAT=4242 KB_TELEGRAM_API=http://127.0.0.1:$port \
+    KB_RELEASES_URL=file://$T/releases.json KB_BOT_ONCE=1 KB_KBUILD=$KBUILD \
+    KB_SYSTEMCTL=$T/systemctl KB_CTL=$CTLBIN \
+        "$REPO/tools/kernel-mirror/arcbase-kbot" 2> "$T/bot.err"
+}
+for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$port" && break; sleep 0.1; done
+: > "$T/systemctl.log"
+upd 4242 /help /status '/build lts force' '/build banana' '/orario 7' '/orario 05:30' /stop '/orario'
+upd_other=$(python3 -c 'import json,sys; u=json.load(open(sys.argv[1])); u.append({"update_id": 200, "message": {"chat": {"id": 666}, "text": "/build"}}); print(json.dumps(u))' "$TG/updates.json")
+printf '%s\n' "$upd_other" > "$TG/updates.json"
+BOT; check "il bot termina senza errori"     test $? -eq 0
+sent > "$T/replies"
+check "token usato nelle chiamate"           bash -c '! grep -q "\"token_ok\": false" "$0"' "$TG/sent.jsonl"
+check "comandi registrati (setMyCommands)"   has "$TG/sent.jsonl" '"method": "setMyCommands"'
+check "/help"                                has "$T/replies" "/orario 04:00"
+check "/status: nessuna build in corso"      has "$T/replies" "Nessuna build in corso"
+check "/status: versioni (arcbase-kbuild check)" has "$T/replies" "KERNEL.ORG"
+check "/status: orario della build"          has "$T/replies" "Build notturna alle <b>03:30</b>"
+check "/build lts force avvia l'unità giusta" has "$T/systemctl.log" "start --no-block arcbase-kbuild-manual@lts-force.service"
+check "/build lts force: risposta"           has "$T/replies" "Build avviata: linux-lts-arcbase (force)"
+check "/build banana: errore d'uso"          has "$T/replies" "Argomento non valido: banana"
+check "/orario 7: errore d'uso"              has "$T/replies" "Uso: /orario HH:MM"
+check "/orario 05:30: drop-in aggiornato"    grep -qx 'OnCalendar=\*-\*-\* 05:30:00' "$T/units/arcbase-kbuild.timer.d/orario.conf"
+check "/stop senza build in corso"           has "$T/replies" "Nessuna build in corso."
+check "chat estranea ignorata"               bash -c '! grep -q "arcbase-kbuild-manual@all" "$0"' "$T/systemctl.log"
+check "chat estranea registrata nel log"     has "$T/bot.err" "ignorato dalla chat 666"
+check "offset salvato (niente doppioni)"     grep -qx 201 "$KB_WORKDIR/state/bot-offset"
+check "timeout del long polling inviato a Telegram" grep -qx 'timeout=0' "$TG/polls.log"
+
+# Build in corso: /status mostra da quanto e a che punto, /build la rifiuta
+echo "arcbase-kbuild-manual@stable.service loaded activating start x" > "$T/running"
+mkdir -p "$KB_WORKDIR/logs" "$KB_WORKDIR/state"
+printf '%s\nstable\nmanual\n' "$(( $(date +%s) - 600 ))" > "$KB_WORKDIR/state/current"
+printf '==> linux-arcbase: 7.2.11-2 -> 7.2.12-1\n  -> compilazione con 12 processi\nCC kernel/fork.o\n' \
+    > "$KB_WORKDIR/logs/20261016-033000-linux-arcbase.log"
+: > "$T/systemctl.log"
+upd 4242 /status /build /stop /log
+BOT; sent > "$T/replies"
+check "/status: build in corso da 10 min"    has "$T/replies" "Build in corso</b> da 10 min (stable, avviata a mano)"
+check "/status: fase attuale dal log"        has "$T/replies" "-&gt; compilazione con 12 processi"
+check "/build rifiutata durante una build"   has "$T/replies" "C'è già una build in corso"
+check "/stop ferma l'unità in corso"         has "$T/systemctl.log" "stop --no-block arcbase-kbuild-manual@stable.service"
+check "/log: ultime righe"                   has "$T/replies" "CC kernel/fork.o"
+kill "$tgpid" 2>/dev/null; wait "$tgpid" 2>/dev/null
 
 echo
 echo "Risultato: $pass superati, $fail falliti"

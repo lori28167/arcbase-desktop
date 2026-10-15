@@ -1,0 +1,13 @@
+[Unit]
+Description=Arcbase: build dei kernel avviata a mano (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=arcbuild
+Group=arcbuild
+ExecStart=/usr/local/bin/arcbase-kbuild run-instance %i
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=8h

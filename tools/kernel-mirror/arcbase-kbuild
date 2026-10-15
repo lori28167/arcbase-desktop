@@ -10,6 +10,7 @@
 #    4. lo prova in QEMU: lo installa con pacman in una VM Arcbase, riavvia
 #       e controlla kernel in uso, systemd, moduli, audio, rete e dmesg
 #    5. se la prova passa lo pubblica nel repository [arcbase-kernel]
+#       (cartella servita in HTTP e/o GitHub Releases, per tutti gli utenti)
 #    6. invia l'esito su Telegram
 #
 #  Flavor:  stable -> linux-arcbase       (ultimo kernel stabile)
@@ -17,12 +18,14 @@
 #
 #  Uso:
 #    arcbase-kbuild run [stable|lts]... [--force] [--no-test]
-#    arcbase-kbuild check                 versioni pubblicate e su kernel.org
+#    arcbase-kbuild check [--no-sync]     versioni pubblicate e su kernel.org
 #    arcbase-kbuild setup-vm [--iso FILE|URL]
 #                                         crea la VM di prova (da una ISO
 #                                         Arcbase con l'installer)
 #    arcbase-kbuild key [--generate]      chiave di firma del repository
 #    arcbase-kbuild repo                  rigenera il database del repository
+#    arcbase-kbuild publish               copia il repository su GitHub Releases
+#                                         (KB_PUBLISH=github; lo fa già 'run')
 #    arcbase-kbuild notify-test           messaggio di prova su Telegram
 #
 #  Configurazione: /etc/arcbase-kbuild.conf (o $KB_CONF), vedi
@@ -68,6 +71,11 @@ fi
 : "${KB_TELEGRAM_CHAT:=}"
 : "${KB_TELEGRAM_API:=https://api.telegram.org}"
 : "${KB_NOTIFY_NOOP:=no}"
+: "${KB_PUBLISH:=local}"
+: "${KB_GITHUB_PUBLISH_REPO:=lori28167/arcbase-kernel}"
+: "${KB_GITHUB_TOKEN:=}"
+: "${KB_GITHUB_API:=https://api.github.com}"
+: "${KB_GITHUB_UPLOADS:=https://uploads.github.com}"
 : "${KB_PACKAGER:=Arcbase kernel builder <kbuild@$(hostname 2>/dev/null || echo localhost)>}"
 
 # Cambiare questo valore forza la ricompilazione di tutti i pacchetti (pkgrel+1)
@@ -393,10 +401,14 @@ cmd_repo() {
     done
     rm -rf "$tmp"
     key=$(signing_key)
-    if [[ -n $key ]]; then
-        sgpg --armor --export "$key" > "$KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc"
-    fi
+    [[ -z $key ]] || export_key "$key"
     info "database $KB_REPO_NAME aggiornato ($(wc -w <<<"$names") pacchetti)"
+}
+
+export_key() {  # chiave pubblica accanto al database: <mirror>/<repo>/x86_64/<repo>.asc
+    mkdir -p "$REPO_ARCH_DIR"
+    sgpg --armor --export "$1" > "$KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc"
+    cp -f "$KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc" "$REPO_ARCH_DIR/$KB_REPO_NAME.asc"
 }
 
 cmd_key() {
@@ -409,10 +421,84 @@ cmd_key() {
     fi
     key=$(signing_key)
     [[ -n $key ]] || die "nessuna chiave di firma: arcbase-kbuild key --generate"
-    mkdir -p "$KB_REPO_DIR/$KB_REPO_NAME"
-    sgpg --armor --export "$key" > "$KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc"
+    export_key "$key"
     echo "Chiave di firma del mirror: $key"
+    echo "(per Arcbase: ARC_KERNEL_KEY_FPR=$key in config/arcbase.conf)"
     echo "Pubblica in: $KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc"
+}
+
+# --- Pubblicazione su GitHub Releases ----------------------------------------------------
+# Con KB_PUBLISH=github il repository locale viene copiato negli asset della
+# release "$ARCH" di KB_GITHUB_PUBLISH_REPO, che pacman legge direttamente:
+#   Server = https://github.com/<utente>/<repo>/releases/download/$arch
+# Il token (KB_GITHUB_TOKEN, permesso "Contents: read and write" su quel solo
+# repository) sta nel file .env e passa a curl da stdin.
+gh_api() {  # gh_api <metodo> <url> [argomenti curl...]
+    printf 'header = "Authorization: Bearer %s"\n' "$KB_GITHUB_TOKEN" |
+        curl -fsS -m 600 --retry 2 -K - -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" -X "$1" "${@:2}"
+}
+
+cmd_publish() {
+    local r=$KB_GITHUB_PUBLISH_REPO rel id name f want sum cur body
+    local -A files=() remote=() remote_id=()
+    [[ $KB_PUBLISH == github ]] || die "KB_PUBLISH non è 'github' (vedi $KB_CONF)"
+    [[ -n $KB_GITHUB_TOKEN ]] || die "KB_GITHUB_TOKEN non impostato in $KB_ENV"
+    [[ -s $REPO_ARCH_DIR/$KB_REPO_NAME.db.tar.gz ]] || die "repository locale vuoto: niente da pubblicare"
+
+    rel=$(gh_api GET "$KB_GITHUB_API/repos/$r/releases/tags/$ARCH" 2>/dev/null) || rel=''
+    if [[ -z $rel ]]; then
+        info "creo la release '$ARCH' in $r"
+        # Il JSON va come argomento: lo stdin di curl porta già il token (-K -)
+        body=$(python3 -c '
+import json, sys
+print(json.dumps({"tag_name": sys.argv[1], "name": "Repository pacman %s (%s)" % (sys.argv[2], sys.argv[1]),
+    "body": "Pacchetti del kernel per Arcbase Desktop, pubblicati da arcbase-kbuild. Non scaricarli "
+            "a mano: sono già configurati in pacman ([%s])." % sys.argv[2],
+    "make_latest": "false"}))' "$ARCH" "$KB_REPO_NAME")
+        rel=$(gh_api POST "$KB_GITHUB_API/repos/$r/releases" --data-binary "$body") || die "impossibile creare la release su $r (token o permessi?)"
+    fi
+    id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$rel")
+    while IFS=$'\t' read -r name f sum; do
+        remote[$name]=$sum remote_id[$name]=$f
+    done < <(gh_api GET "$KB_GITHUB_API/repos/$r/releases/$id/assets?per_page=100" | python3 -c '
+import json, sys
+for a in json.load(sys.stdin):
+    print(a["name"], a["id"], (a.get("digest") or "").removeprefix("sha256:") or "size:%d" % a["size"], sep="\t")')
+
+    # Asset da pubblicare: pacchetti e firme, poi database e chiave (per ultimi,
+    # così pacman non vede mai un database che punta a pacchetti mancanti)
+    for f in "$REPO_ARCH_DIR"/*.pkg.tar.zst "$REPO_ARCH_DIR"/*.pkg.tar.zst.sig; do files[${f##*/}]=$f; done
+    files[$KB_REPO_NAME.files]=$REPO_ARCH_DIR/$KB_REPO_NAME.files.tar.gz
+    files[$KB_REPO_NAME.db]=$REPO_ARCH_DIR/$KB_REPO_NAME.db.tar.gz
+    [[ -s $KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc ]] && files[$KB_REPO_NAME.asc]=$KB_REPO_DIR/$KB_REPO_NAME/$KB_REPO_NAME.asc
+
+    local order=() n=0
+    for name in "${!files[@]}"; do [[ $name == *.pkg.tar.zst* ]] && order+=("$name"); done
+    order+=("$KB_REPO_NAME.files" "$KB_REPO_NAME.db")
+    [[ -n ${files[$KB_REPO_NAME.asc]:-} ]] && order+=("$KB_REPO_NAME.asc")
+    for name in "${order[@]}"; do
+        f=${files[$name]}
+        want=$(sha256sum "$f" | cut -d' ' -f1)
+        cur=${remote[$name]:-}
+        [[ $cur == "$want" || $cur == "size:$(stat -c %s "$f")" && $name == *.pkg.tar.zst* ]] && continue
+        if [[ -n ${remote_id[$name]:-} ]]; then
+            gh_api DELETE "$KB_GITHUB_API/repos/$r/releases/assets/${remote_id[$name]}" >/dev/null
+        fi
+        info "carico $name"
+        gh_api POST "$KB_GITHUB_UPLOADS/repos/$r/releases/$id/assets?name=$name" \
+            -H "Content-Type: application/octet-stream" --data-binary @"$f" >/dev/null ||
+            die "caricamento di $name su GitHub non riuscito"
+        n=$((n + 1))
+    done
+    # Versioni vecchie già tolte dal repository locale
+    for name in "${!remote_id[@]}"; do
+        [[ -n ${files[$name]:-} ]] && continue
+        info "rimuovo $name da GitHub"
+        gh_api DELETE "$KB_GITHUB_API/repos/$r/releases/assets/${remote_id[$name]}" >/dev/null
+        n=$((n + 1))
+    done
+    info "GitHub $r (release $ARCH): $n modifiche"
 }
 
 # --- VM di prova (QEMU) ------------------------------------------------------------------
@@ -687,11 +773,16 @@ test_pkg() {  # test_pkg <pacchetto> <kernelrelease>
 # `set -e` resta attivo: qualunque errore interrompe la build e viene notificato.
 # Codici d'uscita del figlio: 0 pubblicato, 10 già aggiornato, 3 saltato
 # (fallito in precedenza), altro = errore.
-NOTIFIED='' FAILKEY='' LABEL=''
+NOTIFIED='' FAILKEY='' LABEL='' STOPPED=''
 flavor_exit() {
     local rc=$1
     vm_cleanup
     case $rc in 0|3|10) return ;; esac
+    if [[ -n $STOPPED ]]; then
+        # Fermata a mano: la versione non va segnata come fallita
+        tg_msg "⏹ <b>$(html "$LABEL")</b>: build interrotta"
+        return
+    fi
     if [[ -n $FAILKEY ]]; then
         mkdir -p "$KB_WORKDIR/state"
         echo "$FAILKEY" > "$KB_WORKDIR/state/$(flavor_pkg "$FLAVOR").failed"
@@ -705,6 +796,8 @@ cmd__flavor() {  # _flavor <flavor> <force 0/1> <test 0/1>
     pkgname=$(flavor_pkg "$FLAVOR")
     LABEL=$pkgname
     trap 'flavor_exit $?' EXIT
+    trap 'STOPPED=1; exit 143' TERM INT
+    trap '' PIPE
     SRC=${KB_SRC:?}
 
     read -r ver url sigurl < <(upstream "$FLAVOR")
@@ -796,11 +889,19 @@ cmd_run() {
     mkdir -p "$KB_WORKDIR/logs" "$REPO_ARCH_DIR"
     exec 9> "$KB_WORKDIR/lock"
     flock -n 9 || die "un'altra build è già in corso"
+    trap 'exit 143' TERM INT
+    # Letto da arcbase-kbot (/status): inizio, argomenti, origine
+    mkdir -p "$KB_WORKDIR/state"
+    printf '%s\n%s\n%s\n' "$(date +%s)" "${flavors[*]}$( (( force )) && echo ' (force)')" "${KB_RUN_ORIGIN:-timer}" \
+        > "$KB_WORKDIR/state/current"
+    trap 'rm -f "$KB_WORKDIR/state/current"' EXIT
     sync_src
     for f in "${flavors[@]}"; do
         log=$KB_WORKDIR/logs/$(date +%Y%m%d-%H%M%S)-$(flavor_pkg "$f").log
         set +o errexit
-        KB_SRC=$SRC "$0" _flavor "$f" "$force" "$dotest" 2>&1 | tee "$log"
+        # tee ignora TERM/INT: a un /stop deve restare vivo finché il figlio ha
+        # scritto l'ultimo messaggio (altrimenti il figlio muore di SIGPIPE)
+        KB_SRC=$SRC "$0" _flavor "$f" "$force" "$dotest" 2>&1 | (trap '' TERM INT; exec tee "$log")
         rc=${PIPESTATUS[0]}
         set -o errexit
         case $rc in
@@ -813,12 +914,50 @@ cmd_run() {
     done
     # Log più vecchi di 60 giorni
     find "$KB_WORKDIR/logs" -type f -mtime +60 -delete 2>/dev/null || :
+    # Copia su GitHub (idempotente: carica solo ciò che è cambiato, e ritenta
+    # da sola la notte dopo se una pubblicazione precedente è fallita)
+    if [[ $KB_PUBLISH == github && -s $REPO_ARCH_DIR/$KB_REPO_NAME.db.tar.gz ]]; then
+        log=$KB_WORKDIR/logs/$(date +%Y%m%d-%H%M%S)-publish.log
+        set +o errexit
+        "$0" publish 2>&1 | (trap '' TERM INT; exec tee "$log")
+        rc=${PIPESTATUS[0]}
+        set -o errexit
+        if (( rc )); then
+            failed=$((failed + 1))
+            tg_msg "❌ <b>pubblicazione su GitHub</b> ($(html "$KB_GITHUB_PUBLISH_REPO")) non riuscita: i kernel restano solo sul mirror locale, riprovo alla prossima esecuzione"
+            tg_doc "$log" "Log della pubblicazione"
+        elif grep -q ': 0 modifiche' "$log"; then
+            rm -f "$log"
+        fi
+    fi
     (( failed == 0 )) || die "$failed kernel non pubblicati"
+}
+
+# Istanze di arcbase-kbuild-manual@.service: all|stable|lts, con -force
+cmd_run_instance() {
+    local inst=${1:-all} args=()
+    [[ $inst =~ ^(all|stable|lts)(-force)?$ ]] || die "istanza non valida: $inst"
+    [[ ${inst%-force} == all ]] || args+=("${inst%-force}")
+    [[ $inst == *-force ]] && args+=(--force)
+    KB_RUN_ORIGIN=manual cmd_run "${args[@]}"
+}
+
+# Impostazioni risolte (conf + .env + default), lette da arcbase-kbot
+cmd__vars() {
+    local v
+    for v in KB_WORKDIR KB_REPO_DIR KB_REPO_NAME KB_FLAVORS KB_TELEGRAM_TOKEN KB_TELEGRAM_CHAT \
+             KB_TELEGRAM_API KB_PUBLISH KB_GITHUB_PUBLISH_REPO KB_CONF KB_ENV; do
+        printf '%s=%s\0' "$v" "${!v}"
+    done
 }
 
 cmd_check() {
     local f pkgname up ver pub
-    sync_src
+    if [[ ${1:-} == --no-sync && -z $KB_SRC && -d $KB_WORKDIR/arcbase-desktop/.git ]]; then
+        SRC=$KB_WORKDIR/arcbase-desktop
+    else
+        sync_src
+    fi
     printf '%-20s %-14s %-14s %s\n' PACCHETTO PUBBLICATO KERNEL.ORG STATO
     for f in $KB_FLAVORS; do
         pkgname=$(flavor_pkg "$f")
@@ -844,10 +983,13 @@ cmd_notify_test() {
 
 case ${1:-} in
     run)         shift; cmd_run "$@" ;;
-    check)       shift; cmd_check ;;
+    check)       shift; cmd_check "$@" ;;
+    run-instance) shift; cmd_run_instance "$@" ;;
+    _vars)       cmd__vars ;;
     setup-vm)    shift; cmd_setup_vm "$@" ;;
     key)         shift; cmd_key "$@" ;;
     repo)        shift; mkdir -p "$KB_WORKDIR"; cmd_repo ;;
+    publish)     shift; cmd_publish ;;
     notify-test) cmd_notify_test ;;
     _package)    shift; cmd__package "$@" ;;
     _flavor)     shift; cmd__flavor "$@" ;;

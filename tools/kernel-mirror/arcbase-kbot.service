@@ -1,0 +1,13 @@
+[Unit]
+Description=Arcbase: bot Telegram del builder dei kernel (/status, /build, /orario)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=arcbuild
+Group=arcbuild
+ExecStart=/usr/local/bin/arcbase-kbot
+# Senza token configurato il bot esce con 0 e non viene riavviato:
+# dopo aver completato /etc/arcbase-kbuild.env -> systemctl restart arcbase-kbot
+Restart=on-failure
+RestartSec=30

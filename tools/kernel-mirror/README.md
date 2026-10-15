@@ -62,19 +62,28 @@ sudo ./install.sh
 `install.sh`:
 - installa le dipendenze;
 - crea l'utente di sistema `arcbuild`;
-- copia lo script in `/usr/local/bin`;
+- copia `arcbase-kbuild` e il bot `arcbase-kbot` in `/usr/local/bin`, e l'helper
+  `arcbase-kbuild-ctl` in `/usr/local/sbin`;
+- aggiunge la regola sudo per il bot (`/etc/sudoers.d/arcbase-kbuild`, controllata
+  con `visudo`);
 - crea `/etc/arcbase-kbuild.conf` (impostazioni) e `/etc/arcbase-kbuild.env`
   (token del bot Telegram, permessi 600, leggibile solo da `arcbuild`);
 - attiva:
   - `arcbase-kbuild.timer`;
   - `arcbase-kmirror-http.service`, che serve `/srv/arcbase-mirror` sulla porta
-    8080.
+    8080;
+  - `arcbase-kbot.service`, il bot Telegram.
+
+Per aggiornare il builder: `git pull` e di nuovo `sudo ./install.sh`. Il solo
+`git pull` non basta, perché i programmi installati sono copie. La
+configurazione esistente non viene toccata.
 
 Poi:
 
 ```bash
 sudo -u arcbuild nano /etc/arcbase-kbuild.env        # token e chat del bot Telegram
 sudo -u arcbuild arcbase-kbuild notify-test          # messaggio di prova
+sudo systemctl restart arcbase-kbot                  # attiva i comandi del bot
 sudo -u arcbuild arcbase-kbuild key --generate       # chiave di firma del repository
 sudo -u arcbuild arcbase-kbuild setup-vm             # VM di prova (ISO >= 1.1 da GitHub, o --iso FILE)
 sudo systemctl start arcbase-kbuild                  # prima build; log: journalctl -fu arcbase-kbuild
@@ -90,12 +99,67 @@ Altri comandi:
 - `arcbase-kbuild run lts --force`: ricompila subito;
 - `arcbase-kbuild repo`: rigenera il database.
 
+## Comandi del bot Telegram
+
+Il bot risponde **solo alla chat configurata** in `KB_TELEGRAM_CHAT`; i messaggi
+da altre chat vengono ignorati e registrati nel log (`journalctl -u arcbase-kbot`).
+I comandi compaiono anche nel menu `/` di Telegram.
+
+| Comando | Cosa fa |
+|---|---|
+| `/status` | build in corso (da quanto, a che punto), kernel pubblicati e versioni su kernel.org, versioni fallite, prossima build automatica |
+| `/build` | compila subito i kernel con una versione nuova |
+| `/build lts` · `/build stable` | solo un kernel |
+| `/build lts force` | ricompila anche se è già aggiornato (pkgrel+1) |
+| `/stop` | ferma la build in corso; la versione non viene segnata come fallita |
+| `/orario` | mostra l'orario della build notturna |
+| `/orario 04:00` · `/orario off` · `/orario on` | sposta, sospende o riattiva la build notturna |
+| `/log` | ultime righe del log della build |
+
+Il bot gira come `arcbuild`, senza privilegi. Per avviare/fermare le build e
+cambiare il timer usa `sudo arcbase-kbuild-ctl`, l'unico comando permesso dalla
+regola sudo, che accetta solo argomenti validi:
+- `build all|stable|lts[-force]`;
+- `stop`;
+- `schedule HH:MM|off|on`.
+
+L'orario scelto con `/orario` è un drop-in di systemd in
+`/etc/systemd/system/arcbase-kbuild.timer.d/orario.conf`.
+
+## Pubblicazione per tutti gli utenti (GitHub Releases)
+
+Con `KB_PUBLISH=github` in `/etc/arcbase-kbuild.conf`, dopo ogni build riuscita il
+repository viene copiato anche negli asset della release `x86_64` di
+[`lori28167/arcbase-kernel`](https://github.com/lori28167/arcbase-kernel). Da lì
+pacman lo legge direttamente, e Arcbase lo ha già configurato come
+`[arcbase-kernel]`.
+
+Serve un token GitHub **fine-grained**, da mettere in `/etc/arcbase-kbuild.env` come
+`KB_GITHUB_TOKEN`:
+1. github.com → Settings → Developer settings → Fine-grained tokens;
+2. **Repository access:** solo `arcbase-kernel`;
+3. **Permissions:** Contents → **Read and write**, nient'altro.
+
+`arcbase-kbuild publish` sincronizza a mano: carica solo i file cambiati e
+toglie le versioni vecchie. Se una pubblicazione fallisce, ricevi ❌ su Telegram
+e viene ritentata alla build successiva.
+
+La chiave di firma va indicata in `config/arcbase.conf` (`ARC_KERNEL_KEY_FPR`,
+l'impronta mostrata da `arcbase-kbuild key`): le ISO costruite dopo si fidano
+solo dei pacchetti firmati da quella chiave.
+
 ## Sui PC Arcbase
+
+Arcbase ha già `[arcbase-kernel]` attivo (repository pubblico su GitHub) e
+`linux-arcbase` installato. Per usare invece un mirror di casa:
 
 ```bash
 sudo arcbase-kernel-mirror enable http://<ip-del-server>:8080
 sudo pacman -S linux-arcbase          # e/o linux-lts-arcbase
 ```
+
+Per tornare al repository pubblico: `sudo arcbase-kernel-mirror enable`, senza
+URL.
 
 `enable`:
 - scarica la chiave pubblica del mirror e ne mostra l'impronta, da confrontare con

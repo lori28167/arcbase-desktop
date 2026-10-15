@@ -19,6 +19,12 @@ KB_FLAVORS="stable lts"
 KB_REPO_DIR=/srv/arcbase-mirror
 # Versioni tenute per ogni pacchetto (per tornare indietro: pacman -U <url>)
 KB_KEEP=3
+# Pubblicazione per tutti gli utenti Arcbase:
+#   local  = solo la cartella qui sopra (servita in LAN sulla porta 8080)
+#   github = anche negli asset della release "x86_64" di KB_GITHUB_PUBLISH_REPO,
+#            il repository preconfigurato in Arcbase (token in arcbase-kbuild.env)
+KB_PUBLISH=github
+KB_GITHUB_PUBLISH_REPO=lori28167/arcbase-kernel
 # Chiave GPG di firma: vuoto = quella creata con 'arcbase-kbuild key --generate'
 #KB_GPG_KEY=
 

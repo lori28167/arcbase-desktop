@@ -5,6 +5,7 @@
 #  1. allinea glibc/gcc-libs ai repository Arch se più recenti (ABI)
 #  2. adotta i certificati CA di Arch (p11-kit, update-ca-trust)
 #  3. installa i pacchetti comuni (firmware, rete, audio, font, browser)
+#     e attiva il repository dei kernel Arcbase con $ARC_KERNEL_PACKAGE
 #  4. installa il desktop scelto (config/desktop/$ARC_DESKTOP.list)
 #  5. abilita display manager e NetworkManager, configura sudo
 #  6. crea il layer Debian e vi installa $ARC_DEBIAN_PACKAGES
@@ -36,6 +37,27 @@ adopt_ca() {
 common_packages() {
     # shellcheck disable=SC2086
     pac -S --needed $ARC_COMMON_PACKAGES
+}
+
+# Repository [arcbase-kernel]: impostazioni in /etc/arcbase/kernel-repo.conf
+# (le usa 'arcbase-kernel-mirror enable' senza argomenti), chiave fidata solo se
+# ha l'impronta attesa, poi il kernel scelto
+kernel_repo() {
+    if [[ -z $ARC_KERNEL_REPO_URL || -z $ARC_KERNEL_KEY_FPR ]]; then
+        warn "ARC_KERNEL_REPO_URL o ARC_KERNEL_KEY_FPR vuoti: repository dei kernel non configurato"
+        return 0
+    fi
+    mkdir -p /etc/arcbase
+    cat > /etc/arcbase/kernel-repo.conf <<EOF
+# Arcbase Desktop — repository pubblico dei kernel (arcbase-kernel-mirror enable)
+KERNEL_REPO_URL='$ARC_KERNEL_REPO_URL'
+KERNEL_KEY_FPR=$ARC_KERNEL_KEY_FPR
+EOF
+    arcbase-kernel-mirror enable --no-sync
+    pac -Sy
+    if [[ -n $ARC_KERNEL_PACKAGE ]]; then
+        pac -S --needed "$ARC_KERNEL_PACKAGE"
+    fi
 }
 
 desktop_packages() {
@@ -114,6 +136,7 @@ cleanup() {
 step runtime-sync runtime_sync
 step ca           adopt_ca
 step common       common_packages
+step kernel-repo  kernel_repo
 step desktop-pkgs desktop_packages
 step caches       update_caches
 step desktop-conf configure_desktop

@@ -1,30 +1,40 @@
 #!/bin/bash
 # =============================================================================
-#  arcbase-kernel-mirror — collega il sistema al mirror dei kernel Arcbase
+#  arcbase-kernel-mirror — repository dei kernel Arcbase ([arcbase-kernel])
 #
-#  Il mirror (vedi tools/kernel-mirror, di solito su un server di casa)
-#  pubblica il repository pacman [arcbase-kernel] con:
+#  Il repository contiene:
 #    linux-arcbase       ultimo kernel stabile di kernel.org
 #    linux-lts-arcbase   ultimo kernel longterm (LTS)
 #  compilati con la configurazione di Arcbase e provati in QEMU prima della
-#  pubblicazione. I due pacchetti possono convivere: GRUB li elenca entrambi.
+#  pubblicazione (vedi tools/kernel-mirror). I due pacchetti possono convivere:
+#  GRUB li elenca entrambi.
+#
+#  Arcbase lo ha già attivo (repository pubblico su GitHub, impostazioni in
+#  /etc/arcbase/kernel-repo.conf). Questo comando serve per passare a un
+#  mirror di casa o per tornare a quello pubblico.
 #
 #  Uso:
-#    sudo arcbase-kernel-mirror enable http://server:8080 [--no-key]
+#    sudo arcbase-kernel-mirror enable                 repository pubblico predefinito
+#    sudo arcbase-kernel-mirror enable http://server:8080 [--fpr IMPRONTA | --no-key]
 #    sudo arcbase-kernel-mirror disable
 #    arcbase-kernel-mirror status
 #
-#  enable scarica la chiave pubblica del mirror (<url>/arcbase-kernel/
-#  arcbase-kernel.asc), ne mostra l'impronta e la aggiunge al portachiavi di
-#  pacman; --no-key accetta pacchetti non firmati (sconsigliato).
+#  L'URL può essere la radice di un mirror arcbase-kbuild (http://server:8080)
+#  oppure l'indirizzo completo del repository con $arch. La chiave pubblica
+#  (<repository>/arcbase-kernel.asc) viene scaricata e aggiunta a pacman; con
+#  --fpr si rifiuta una chiave diversa da quella attesa, con --no-key si
+#  accettano pacchetti non firmati (sconsigliato).
 #  Poi: sudo pacman -Sy linux-arcbase   (oppure linux-lts-arcbase)
 # =============================================================================
 set -o errexit -o nounset -o pipefail
 
 REPO=arcbase-kernel
 PACMAN_CONF=${ARC_PACMAN_CONF:-/etc/pacman.conf}
+DEFAULTS=${ARC_KERNEL_REPO_CONF:-/etc/arcbase/kernel-repo.conf}
 BEGIN="# >>> $REPO (arcbase-kernel-mirror)"
 END="# <<< $REPO"
+tmp=''
+trap '[[ -z $tmp ]] || rm -f "$tmp"' EXIT
 
 die() { printf '==> ERRORE: %s\n' "$*" >&2; exit 1; }
 need_root() { [[ $EUID -eq 0 ]] || die "serve root: sudo $0 $*"; }
@@ -34,30 +44,46 @@ strip_section() {  # rimuove la sezione gestita da questo script
 }
 
 cmd_enable() {
-    local url='' key=1 fpr siglevel
+    local url='' key=1 want='' fpr siglevel server base sync=1
     while (( $# )); do
         case $1 in
             --no-key) key=0 ;;
+            --fpr) want=${2^^}; want=${want// /}; shift ;;
+            --no-sync) sync=0 ;;
             -*) die "opzione sconosciuta: $1" ;;
             *) url=${1%/} ;;
         esac
         shift
     done
-    [[ $url == http://* || $url == https://* || $url == file://* ]] || die "uso: $0 enable <url del mirror> [--no-key]"
+    if [[ -z $url ]]; then
+        [[ -r $DEFAULTS ]] || die "uso: $0 enable <url del mirror> (manca $DEFAULTS)"
+        # shellcheck source=/dev/null
+        . "$DEFAULTS"
+        url=${KERNEL_REPO_URL:-}
+        [[ -n $want ]] || want=${KERNEL_KEY_FPR:-}
+        [[ -n $url ]] || die "KERNEL_REPO_URL vuoto in $DEFAULTS"
+    fi
+    [[ $url == http://* || $url == https://* || $url == file://* ]] || die "URL non valido: $url"
     need_root enable
 
-    curl -fsS -o /dev/null "$url/$REPO/x86_64/$REPO.db" || die "$url non risponde o non è un mirror dei kernel Arcbase"
+    # Radice di un mirror (http://server:8080) o repository completo con $arch
+    if [[ $url == *'$arch'* ]]; then server=$url; else server="$url/$REPO/\$arch"; fi
+    base=${server//\$arch/x86_64}
+    curl -fsSL -o /dev/null "$base/$REPO.db" || die "$base/$REPO.db non raggiungibile: non è un repository dei kernel Arcbase"
     if (( key )); then
         tmp=$(mktemp)
-        trap 'rm -f "$tmp"' EXIT   # tmp globale: la trap gira all'uscita dello script
-        curl -fsS -o "$tmp" "$url/$REPO/$REPO.asc" || die "chiave $url/$REPO/$REPO.asc non trovata (oppure usare --no-key)"
+        curl -fsSL -o "$tmp" "$base/$REPO.asc" || die "chiave $base/$REPO.asc non trovata (oppure usare --no-key)"
         fpr=$(gpg --batch --with-colons --import-options show-only --import "$tmp" 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}')
         [[ -n $fpr ]] || die "la chiave scaricata non è valida"
-        echo "Chiave del mirror: $fpr"
-        echo "Confrontala con quella mostrata da 'arcbase-kbuild key' sul server."
+        if [[ -n $want && $fpr != "$want" ]]; then
+            die "la chiave del repository ($fpr) non è quella attesa ($want): non la uso"
+        fi
+        echo "Chiave del repository: $fpr"
+        [[ -n $want ]] || echo "Confrontala con quella mostrata da 'arcbase-kbuild key' sul server."
         pacman-key --add "$tmp" >/dev/null
         pacman-key --lsign-key "$fpr" >/dev/null
-        siglevel='Required'
+        # Il database su GitHub non è firmato (come quelli di Arch); i pacchetti sì
+        siglevel='Required DatabaseOptional'
     else
         echo "ATTENZIONE: pacchetti del kernel accettati senza firma" >&2
         siglevel='Optional TrustAll'
@@ -68,9 +94,11 @@ cmd_enable() {
 $BEGIN
 [$REPO]
 SigLevel = $siglevel
-Server = $url/$REPO/\$arch
+Server = $server
 $END
 EOF
+    echo "[$REPO] -> $server"
+    (( sync )) || return 0
     pacman -Sy
     echo
     pacman -Sl "$REPO" || :
@@ -88,7 +116,7 @@ cmd_status() {
     if grep -qx "$BEGIN" "$PACMAN_CONF"; then
         sed -n "/^$BEGIN\$/,/^$END\$/p" "$PACMAN_CONF" | grep -E '^(Server|SigLevel)'
     else
-        echo "mirror dei kernel non configurato"
+        echo "repository dei kernel non configurato (sudo $0 enable)"
     fi
     echo "Kernel in /boot:"
     find /boot -maxdepth 1 -name 'vmlinuz-*' -printf '  %f\n' | sort -V

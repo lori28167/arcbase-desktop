@@ -102,7 +102,8 @@ lint:
 	shellcheck -x $(S)/*.sh $(S)/lib/common.sh $(S)/chroot/*.sh \
 	    rootfs/usr/bin/arc rootfs/usr/bin/arcbase-* \
 	    rootfs/usr/lib/arcbase/*.sh rootfs/usr/share/libalpm/scripts/* \
-	    tools/kernel-mirror/arcbase-kbuild tools/kernel-mirror/install.sh \
+	    tools/kernel-mirror/arcbase-kbuild tools/kernel-mirror/arcbase-kbuild-ctl \
+	    tools/kernel-mirror/install.sh \
 	    tests/*.sh
 
 test:

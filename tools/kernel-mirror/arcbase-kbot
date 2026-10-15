@@ -1,0 +1,290 @@
+#!/usr/bin/env python3
+# =============================================================================
+#  arcbase-kbot — bot Telegram del builder dei kernel Arcbase
+#
+#  Comandi (solo dalla chat KB_TELEGRAM_CHAT, gli altri vengono ignorati):
+#    /status                    build in corso, kernel pubblicati, prossima build
+#    /build [stable|lts] [force] avvia una build adesso
+#    /stop                      ferma la build in corso
+#    /orario [HH:MM|off|on]     mostra o cambia l'orario della build notturna
+#    /log                       ultime righe del log della build
+#    /help                      questo elenco
+#
+#  Token e chat vengono da /etc/arcbase-kbuild.env (tramite 'arcbase-kbuild
+#  _vars'). Le azioni privilegiate passano da arcbase-kbuild-ctl via sudo.
+#  Gira come servizio arcbase-kbot.service (utente arcbuild).
+# =============================================================================
+import glob
+import html
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+KBUILD = os.environ.get('KB_KBUILD', '/usr/local/bin/arcbase-kbuild')
+CTL = os.environ.get('KB_CTL', 'sudo -n /usr/local/sbin/arcbase-kbuild-ctl').split()
+SYSTEMCTL = os.environ.get('KB_SYSTEMCTL', 'systemctl')
+ONCE = os.environ.get('KB_BOT_ONCE') == '1'   # per i test: esce quando non ci sono messaggi
+ANSI = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
+
+COMMANDS = [
+    ('status', 'Stato: build in corso, kernel pubblicati, prossima build'),
+    ('build', 'Avvia una build: /build, /build lts, /build stable force'),
+    ('stop', 'Ferma la build in corso'),
+    ('orario', 'Orario della build notturna: /orario 04:00, off, on'),
+    ('log', 'Ultime righe del log della build'),
+    ('help', 'Elenco dei comandi'),
+]
+HELP = '''<b>arcbase-kbot</b> — builder dei kernel Arcbase
+
+/status — build in corso, kernel pubblicati e su kernel.org, prossima build
+/build — compila subito i kernel che hanno una versione nuova
+/build lts · /build stable — solo un kernel
+/build lts force — ricompila anche se è già aggiornato
+/stop — ferma la build in corso (la versione non viene segnata come fallita)
+/orario — mostra l'orario della build notturna
+/orario 04:00 — la sposta alle 04:00 · /orario off · /orario on
+/log — ultime righe del log'''
+
+
+def log(*a):
+    print(*a, file=sys.stderr, flush=True)
+
+
+def load_vars():
+    out = subprocess.run([KBUILD, '_vars'], capture_output=True, check=True).stdout
+    return dict(x.split('=', 1) for x in out.decode().split('\0') if '=' in x)
+
+
+V = {}
+
+
+def api(method, _wait=70, **params):
+    # _wait = attesa massima della connessione; "timeout" tra i params è quello
+    # del long polling di getUpdates, da mandare a Telegram
+    url = f"{V['KB_TELEGRAM_API']}/bot{V['KB_TELEGRAM_TOKEN']}/{method}"
+    data = urllib.parse.urlencode(params).encode()
+    with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=_wait) as r:
+        res = json.load(r)
+    if not res.get('ok'):
+        raise RuntimeError(f'{method}: {res}')
+    return res['result']
+
+
+def reply(text):
+    for i in range(0, len(text), 4000):   # limite di Telegram: 4096 caratteri
+        api('sendMessage', chat_id=V['KB_TELEGRAM_CHAT'], text=text[i:i + 4000],
+            parse_mode='HTML', disable_web_page_preview='true')
+
+
+def run(cmd, timeout=120):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, str(e)
+
+
+def esc(s):
+    return html.escape(ANSI.sub('', s), quote=False)
+
+
+def systemd_prop(unit, prop):
+    rc, out = run([SYSTEMCTL, 'show', unit, '-p', prop, '--value'])
+    return out if rc == 0 else ''
+
+
+def running_units():
+    rc, out = run([SYSTEMCTL, 'list-units', '--no-legend', '--plain',
+                   '--state=active,activating,deactivating',
+                   'arcbase-kbuild.service', 'arcbase-kbuild-manual@*.service'])
+    return [l.split()[0] for l in out.splitlines() if l.strip()] if rc == 0 else []
+
+
+def latest_log():
+    logs = glob.glob(os.path.join(V['KB_WORKDIR'], 'logs', '*.log'))
+    logs = [l for l in logs if not os.path.basename(l).startswith('console-')]
+    return max(logs, key=os.path.getmtime) if logs else None
+
+
+def log_phase(path):
+    try:
+        lines = open(path, errors='replace').read().splitlines()
+    except OSError:
+        return ''
+    steps = [ANSI.sub('', l).strip() for l in lines if re.match(r'\s*(==>|->)', ANSI.sub('', l))]
+    return steps[-1] if steps else ''
+
+
+def schedule_text():
+    enabled = systemd_prop('arcbase-kbuild.timer', 'UnitFileState')
+    cal = systemd_prop('arcbase-kbuild.timer', 'TimersCalendar')
+    m = re.search(r'OnCalendar=\S+ (\d\d:\d\d)', cal)
+    nxt = systemd_prop('arcbase-kbuild.timer', 'NextElapseUSecRealtime')
+    if enabled != 'enabled':
+        return '⏸ Build notturna <b>sospesa</b> (/orario on per riattivarla)'
+    txt = f"⏰ Build notturna alle <b>{m.group(1) if m else '?'}</b>"
+    if nxt and nxt != 'n/a':
+        txt += f' · prossima: {esc(nxt)}'
+    return txt
+
+
+def cmd_status(args):
+    parts = []
+    units = running_units()
+    cur = os.path.join(V['KB_WORKDIR'], 'state', 'current')
+    if units:
+        line = '🔨 <b>Build in corso</b>'
+        try:
+            start, what, origin = open(cur).read().splitlines()[:3]
+            mins = int((time.time() - int(start)) // 60)
+            line += f" da {mins} min ({esc(what or 'tutti')}, {'avviata a mano' if origin == 'manual' else 'automatica'})"
+        except (OSError, ValueError):
+            pass
+        lg = latest_log()
+        if lg:
+            line += f'\n   {esc(log_phase(lg))}'
+        parts.append(line)
+    else:
+        parts.append('💤 Nessuna build in corso')
+    rc, out = run([KBUILD, 'check', '--no-sync'], timeout=90)
+    parts.append(f'<pre>{esc(out)}</pre>' if rc == 0 else f'⚠️ versioni non disponibili: {esc(out[-300:])}')
+    failed = []
+    for f in sorted(glob.glob(os.path.join(V['KB_WORKDIR'], 'state', '*.failed'))):
+        name = os.path.basename(f)[:-len('.failed')]
+        ver = open(f).read().split()[0] if os.path.getsize(f) else '?'
+        failed.append(f'{name} {ver}')
+    if failed:
+        parts.append('❌ Fallite (non ritentate fino a /build … force): ' + esc(', '.join(failed)))
+    parts.append(schedule_text())
+    if V.get('KB_PUBLISH') == 'github':
+        r = V.get('KB_GITHUB_PUBLISH_REPO', '')
+        parts.append(f'🌍 Pubblicati anche su <a href="https://github.com/{esc(r)}/releases/tag/x86_64">GitHub</a>')
+    reply('\n\n'.join(parts))
+
+
+def cmd_build(args):
+    flavor, force = 'all', False
+    for a in (x.lower() for x in args):
+        if a in ('stable', 'lts', 'all', 'tutti'):
+            flavor = 'all' if a == 'tutti' else a
+        elif a in ('force', '--force', 'forza'):
+            force = True
+        else:
+            return reply(f'Argomento non valido: {esc(a)}\nUso: /build [stable|lts] [force]')
+    inst = flavor + ('-force' if force else '')
+    rc, out = run(CTL + ['build', inst])
+    if rc == 0:
+        what = {'all': 'tutti i kernel', 'stable': 'linux-arcbase', 'lts': 'linux-lts-arcbase'}[flavor]
+        reply(f"🔨 Build avviata: {what}{' (force)' if force else ''}.\n"
+              'Ti scrivo io quando finisce; /status per seguirla.')
+    elif rc == 3:
+        reply(f'⏳ C\'è già una build in corso: /status per vederla, /stop per fermarla.')
+    else:
+        reply(f'❌ Non riesco ad avviare la build:\n<pre>{esc(out)}</pre>')
+
+
+def cmd_stop(args):
+    rc, out = run(CTL + ['stop'])
+    if rc == 0:
+        reply('⏹ Sto fermando la build (la versione non viene segnata come fallita).')
+    elif rc == 4:
+        reply('💤 Nessuna build in corso.')
+    else:
+        reply(f'❌ Non riesco a fermare la build:\n<pre>{esc(out)}</pre>')
+
+
+def cmd_orario(args):
+    if not args:
+        return reply(schedule_text() + '\n\nPer cambiarlo: /orario 04:00 · /orario off · /orario on')
+    rc, out = run(CTL + ['schedule', args[0].lower()])
+    if rc == 0:
+        reply('✅ ' + esc(out) + '\n' + schedule_text())
+    elif rc == 2:
+        reply('Uso: /orario HH:MM (es. /orario 04:00), /orario off, /orario on')
+    else:
+        reply(f'❌ Non riesco a cambiare l\'orario:\n<pre>{esc(out)}</pre>')
+
+
+def cmd_log(args):
+    lg = latest_log()
+    if not lg:
+        return reply('Nessun log ancora.')
+    lines = [ANSI.sub('', l) for l in open(lg, errors='replace').read().splitlines()]
+    tail = '\n'.join(l for l in lines if l.strip())[-3500:].split('\n')[-25:]
+    reply(f'📄 <b>{esc(os.path.basename(lg))}</b>\n<pre>{esc(chr(10).join(tail))}</pre>')
+
+
+def cmd_help(args):
+    reply(HELP)
+
+
+HANDLERS = {'status': cmd_status, 'build': cmd_build, 'stop': cmd_stop, 'orario': cmd_orario,
+            'log': cmd_log, 'help': cmd_help, 'start': cmd_help}
+
+
+def handle(msg):
+    if not msg or 'text' not in msg:
+        return
+    chat = str(msg.get('chat', {}).get('id'))
+    if chat != V['KB_TELEGRAM_CHAT']:
+        log(f'messaggio ignorato dalla chat {chat}')
+        return
+    words = msg['text'].split()
+    if not words or not words[0].startswith('/'):
+        return reply('Comandi: /status /build /stop /orario /log — /help per i dettagli')
+    cmd = words[0][1:].split('@')[0].lower()
+    h = HANDLERS.get(cmd)
+    if not h:
+        return reply(f'Comando sconosciuto: /{esc(cmd)} — /help')
+    log(f'comando /{cmd} {" ".join(words[1:])}')
+    try:
+        h(words[1:])
+    except Exception as e:   # un comando che fallisce non deve fermare il bot
+        log(f'errore in /{cmd}: {e!r}')
+        reply(f'❌ Errore interno in /{esc(cmd)}: {esc(str(e))}')
+
+
+def main():
+    global V
+    V = load_vars()
+    if not V.get('KB_TELEGRAM_TOKEN') or not V.get('KB_TELEGRAM_CHAT'):
+        log(f"KB_TELEGRAM_TOKEN/KB_TELEGRAM_CHAT non impostati in {V.get('KB_ENV')}: bot disattivato")
+        return 0
+    offset_file = os.path.join(V['KB_WORKDIR'], 'state', 'bot-offset')
+    os.makedirs(os.path.dirname(offset_file), exist_ok=True)
+    try:
+        offset = int(open(offset_file).read())
+    except (OSError, ValueError):
+        offset = 0
+    try:
+        api('setMyCommands', commands=json.dumps([{'command': c, 'description': d} for c, d in COMMANDS]))
+    except Exception as e:
+        log(f'setMyCommands non riuscito: {e!r}')
+    log('arcbase-kbot in ascolto')
+    while True:
+        try:
+            updates = api('getUpdates', offset=offset, timeout=0 if ONCE else 50,
+                          allowed_updates='["message"]')
+        except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
+            log(f'getUpdates: {e!r}')
+            if ONCE:
+                return 1
+            time.sleep(10)
+            continue
+        for u in updates:
+            offset = u['update_id'] + 1
+            with open(offset_file, 'w') as f:   # prima di eseguire: niente doppioni dopo un riavvio
+                f.write(str(offset))
+            handle(u.get('message'))
+        if ONCE and not updates:
+            return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

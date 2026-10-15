@@ -29,7 +29,9 @@ done
 
 KERNEL=$(find "$LFS/boot" -maxdepth 1 -name 'vmlinuz-*' -printf '%f\n' | sort -V | tail -n1)
 [[ -n $KERNEL ]] || die "nessun kernel in $LFS/boot"
-KCONFIG="$LFS/boot/config-$(sed -e 's/^vmlinuz-//' -e 's/-arcbase$//' <<<"$KERNEL")"
+# config-<versione> per il kernel LFS, config-<versione>-arcbase per i pacchetti
+KCONFIG="$LFS/boot/config-${KERNEL#vmlinuz-}"
+[[ -f $KCONFIG ]] || KCONFIG="$LFS/boot/config-$(sed -e 's/^vmlinuz-//' -e 's/-arcbase$//' <<<"$KERNEL")"
 if [[ -f $KCONFIG ]]; then
     for opt in BLK_DEV_INITRD RD_GZIP BLK_DEV_LOOP BLK_DEV_SR ISO9660_FS SQUASHFS \
                SQUASHFS_ZSTD OVERLAY_FS; do
