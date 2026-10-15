@@ -31,6 +31,10 @@ build_gcc_pass1() {
     extract_into mpc mpc
     sed -e '/m64=/s/lib64/lib/' -i.orig gcc/config/i386/t-linux64
     mkdir -v build && cd build
+    # Il compilatore dell'host (es. GCC >= 15/16) usa C23 e C++20 di default:
+    # con C++20 i letterali u8"" sono char8_t e libcody di GCC 14 non compila.
+    # Si fissano gli standard per cui GCC 14 è scritto.
+    CC="gcc -std=gnu17" CXX="g++ -std=gnu++17" \
     ../configure --target="$LFS_TGT"            \
                  --prefix="$LFS/tools"          \
                  --with-glibc-version="$GLIBC_VER" \

@@ -56,6 +56,7 @@ grep                    grep
 bash                    bash
 sh                      bash
 libtool                 libtool
+libltdl                 libtool
 gdbm                    gdbm
 gperf                   gperf
 expat                   expat
@@ -99,6 +100,7 @@ python-markupsafe       markupsafe
 python-jinja            jinja2
 systemd                 systemd
 systemd-libs            systemd
+libsystemd              systemd
 systemd-sysvcompat      systemd
 dbus                    dbus
 libdbus                 dbus

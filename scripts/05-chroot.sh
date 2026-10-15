@@ -25,7 +25,17 @@ change_owner() {
     mark_done chroot-owner
 }
 
+# Con ARC_ALLOW_UNMOUNTED=1 $LFS è una semplice directory: nel chroot "/" non
+# sarebbe un punto di montaggio e pacman ("CheckSpace") rifiuterebbe ogni
+# installazione. Come arch-chroot, si monta $LFS su se stesso (prima degli altri
+# mount, che altrimenti verrebbero nascosti) e lo si ricorda in /run.
+SELFBIND_MARK="/run/arcbase-selfbind-$(printf '%s' "$LFS" | tr / _)"
+
 mount_vkfs() {
+    if ! mountpoint -q "$LFS"; then
+        mount -v --bind "$LFS" "$LFS"
+        touch "$SELFBIND_MARK"
+    fi
     mkdir -pv "$LFS"/{dev,proc,sys,run}
     mountpoint -q "$LFS/dev"     || mount -v --bind /dev "$LFS/dev"
     mountpoint -q "$LFS/dev/pts" || mount -vt devpts devpts -o gid=5,mode=0620 "$LFS/dev/pts"
@@ -50,6 +60,10 @@ umount_vkfs() {
             umount "$LFS/$m" 2>/dev/null || umount -l "$LFS/$m"
         fi
     done
+    if [[ -e $SELFBIND_MARK ]]; then
+        umount "$LFS" 2>/dev/null || umount -l "$LFS"
+        rm -f "$SELFBIND_MARK"
+    fi
 }
 
 chroot_exec() {

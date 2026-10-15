@@ -12,7 +12,7 @@ S     := scripts
 
 .PHONY: help all check prepare download toolchain temp-tools chroot-tools \
         base-system merge-usr config kernel package-managers desktop image \
-        enter umount lint test clean-stamps
+        iso iso-test enter umount lint test clean-stamps
 
 help:
 	@echo "Arcbase Desktop — LFS + pacman (Arch) + apt (Debian)"
@@ -31,6 +31,8 @@ help:
 	@echo "  package-managers  pacman, arcbase-base, layer apt/dpkg, arc"
 	@echo "  desktop           desktop (\$$ARC_DESKTOP) dai repository Arch + layer Debian"
 	@echo "  image             immagine disco avviabile in out/"
+	@echo "  iso               ISO live ibrida (BIOS+UEFI, CD/USB) in out/"
+	@echo "  iso-test          avvia la ISO in QEMU (BIOS e UEFI), senza root"
 	@echo
 	@echo "Altro:"
 	@echo "  all               tutti gli stadi in sequenza"
@@ -79,6 +81,12 @@ desktop:
 
 image:
 	$(S)/12-image.sh
+
+iso:
+	$(S)/13-iso.sh
+
+iso-test:
+	$(S)/14-iso-test.sh
 
 enter:
 	$(S)/05-chroot.sh enter

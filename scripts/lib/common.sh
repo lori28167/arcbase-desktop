@@ -182,9 +182,14 @@ as_lfs_user() {
     sync_tree
     local -a cfg
     mapfile -t cfg < <(config_env)
+    # Gli strumenti di supporto compilati per l'host (mkbuiltins di bash, i gen*
+    # di gcc...) usano il gcc della distribuzione host, che da GCC 15 adotta C23
+    # e C++20: il codice dei sorgenti LFS 12.3 è scritto per gli standard precedenti.
     exec runuser -u lfs -- env -i "${cfg[@]}" \
         HOME=/home/lfs TERM="${TERM:-xterm}" LC_ALL=POSIX \
         LFS="$LFS" LFS_TGT="$LFS_TGT" \
+        CC_FOR_BUILD="gcc -std=gnu17" CXX_FOR_BUILD="g++ -std=gnu++17" \
+        BUILD_CC="gcc -std=gnu17" \
         PATH="$LFS/tools/bin:/usr/bin:/bin" \
         CONFIG_SITE="$LFS/usr/share/config.site" \
         MAKEFLAGS="$MAKEFLAGS" LFS_TESTS="$LFS_TESTS" LFS_VERBOSE="$LFS_VERBOSE" \

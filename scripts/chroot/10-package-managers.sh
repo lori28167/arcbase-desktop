@@ -32,7 +32,17 @@ build_cacert() {
 
 build_libgpg_error() { autotools; }
 build_libgcrypt()    { autotools; }
-build_libassuan()    { autotools; }
+# libassuan resta alla 3.0.0 come in Arch: dalla 3.0.1 la versione dei simboli
+# è LIBASSUAN_2.0 e i binari Arch (es. gpgme 2.x) richiedono LIBASSUAN_1.0.
+build_libassuan() {
+    autotools
+    # Se c'era una versione più recente (es. 3.0.2), ldconfig farebbe puntare
+    # libassuan.so.9 al file con numero maggiore: si tiene solo quello installato.
+    local lib
+    lib=$(readlink /usr/lib/libassuan.so)
+    find /usr/lib -maxdepth 1 -name 'libassuan.so.9.*' ! -name "$lib" -delete
+    ln -sfn "$lib" /usr/lib/libassuan.so.9
+}
 build_libksba()      { autotools; }
 build_npth()         { autotools; }
 
@@ -48,9 +58,21 @@ build_gnupg() {
 
 build_gpgme() {
     mkdir build && cd build
-    ../configure --prefix=/usr --disable-static --disable-gpg-test
+    # Solo la libreria C (serve a pacman): i binding C++/Qt li forniscono i
+    # pacchetti Arch (gpgmepp, qgpgme), che altrimenti troverebbero file in conflitto.
+    ../configure --prefix=/usr --disable-static --disable-gpg-test \
+                 --disable-languages
     make
-    make install
+    # Si controlla il database e non "pacman -Q": se gpgme o le sue dipendenze
+    # sono appena cambiate, pacman stesso potrebbe non avviarsi.
+    if compgen -G '/var/lib/pacman/local/gpgme-[0-9]*' >/dev/null; then
+        # gpgme già adottato da Arch (2.x, libgpgme.so.45): si installa solo la
+        # libreria 1.x usata da pacman, senza toccare i file del pacchetto Arch.
+        make DESTDIR="$PWD/dest" install
+        cp -av dest/usr/lib/libgpgme.so.11* /usr/lib/
+    else
+        make install
+    fi
 }
 
 build_libarchive() { autotools; }

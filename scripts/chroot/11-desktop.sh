@@ -45,6 +45,27 @@ desktop_packages() {
     pac -S --needed "${pkgs[@]}"
 }
 
+# Rigenera le cache che pacman aggiorna negli hook di fine transazione
+# (schemi GLib, icone, font, moduli GTK/GIO, ...): se la transazione è stata
+# interrotta durante gli hook, senza questo passo alcune app non partirebbero.
+update_caches() {
+    local d
+    command -v glib-compile-schemas >/dev/null && glib-compile-schemas /usr/share/glib-2.0/schemas
+    command -v gio-querymodules >/dev/null && gio-querymodules /usr/lib/gio/modules
+    command -v gdk-pixbuf-query-loaders >/dev/null && gdk-pixbuf-query-loaders --update-cache
+    command -v gtk-query-immodules-3.0 >/dev/null && gtk-query-immodules-3.0 --update-cache
+    command -v update-mime-database >/dev/null && update-mime-database /usr/share/mime
+    command -v update-desktop-database >/dev/null && update-desktop-database -q
+    command -v fc-cache >/dev/null && fc-cache -s
+    command -v dconf >/dev/null && dconf update
+    if command -v gtk-update-icon-cache >/dev/null; then
+        for d in /usr/share/icons/*/; do
+            [[ -f $d/index.theme ]] && gtk-update-icon-cache -q -t -f "$d"
+        done
+    fi
+    return 0
+}
+
 configure_desktop() {
     local dm=''
     if [[ -f $LIST ]]; then
@@ -94,6 +115,7 @@ step runtime-sync runtime_sync
 step ca           adopt_ca
 step common       common_packages
 step desktop-pkgs desktop_packages
+step caches       update_caches
 step desktop-conf configure_desktop
 step debian-layer debian_layer
 step cleanup      cleanup
