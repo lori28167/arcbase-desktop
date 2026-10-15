@@ -555,11 +555,17 @@ for a in json.loads(sys.argv[1])["assets"]:
         [[ -s $d/${n%% *} ]] || curl -fL -m 7200 --retry 3 -o "$d/${n%% *}" "${n#* }" >&2 ||
             die "download di ${n%% *} non riuscito"
     done
-    iso=$(cd "$d" && sed -n 's/^[0-9a-f]\{64\} \*\{0,1\}\(.*\.iso\)$/\1/p' SHA256SUMS | head -n1)
+    # Righe di sha256sum: "<hash>  <file>" (due spazi) o "<hash> *<file>"
+    iso=$(awk '$2 ~ /\.iso$/ { sub(/^\*/, "", $2); print $2; exit }' "$d/SHA256SUMS")
     [[ -n $iso ]] || die "SHA256SUMS senza ISO"
     if [[ ! -s $d/$iso ]]; then
-        cat "$d/$iso".part* > "$d/$iso.tmp" && mv "$d/$iso.tmp" "$d/$iso"
+        local parts=("$d/$iso".part*)
+        (( ${#parts[@]} )) || die "parti della ISO $iso non trovate in $d"
+        info "unisco ${#parts[@]} parti in $iso" >&2
+        cat "${parts[@]}" < /dev/null > "$d/$iso.tmp"
+        mv "$d/$iso.tmp" "$d/$iso"
     fi
+    info "verifica dei checksum" >&2
     (cd "$d" && sha256sum -c --ignore-missing --quiet SHA256SUMS >&2) || die "checksum della ISO errato"
     printf '%s\n' "$d/$iso"
 }
