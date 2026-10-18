@@ -1,0 +1,16 @@
+{
+    "KPlugin": {
+        "Description": "Decorazione delle finestre di arc UI",
+        "Id": "org.arcbase.arc",
+        "License": "AGPL-3.0",
+        "Name": "arc"
+    },
+    "org.kde.kdecoration3": {
+        "blur": true,
+        "recommendedBorderSize": "None",
+        "styles": [
+            "shadow",
+            "titled"
+        ]
+    }
+}

@@ -1,0 +1,16 @@
+{
+    "KPackageStructure": "KWin/WindowSwitcher",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "ArcBase"
+            }
+        ],
+        "Description": "arc UI — selettore delle finestre (Alt+Tab)",
+        "Id": "arc",
+        "License": "AGPL-3.0",
+        "Name": "arc",
+        "Version": "1.0"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

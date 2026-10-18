@@ -1,0 +1,37 @@
+[org.kde.kdecoration2]
+library=org.arcbase.arc
+ButtonsOnLeft=
+ButtonsOnRight=IAX
+BorderSize=Normal
+BorderSizeAuto=false
+
+[Plugins]
+blurEnabled=true
+# Animazione di ingrandimento/ripristino delle finestre (insieme alla topbar)
+maximizeEnabled=true
+contrastEnabled=false
+overviewEnabled=false
+windowviewEnabled=false
+desktopchangeosdEnabled=false
+
+[Effect-blur]
+BlurStrength=12
+NoiseStrength=0
+
+[TabBox]
+LayoutName=arc
+
+[TabBoxAlternative]
+LayoutName=arc
+
+[ModifierOnlyShortcuts]
+Meta=org.arcbase.Shell,/Shell,org.arcbase.Shell,toggleLauncher
+
+[Desktops]
+Number=1
+Rows=1
+
+[Windows]
+# App ingrandite senza barra del titolo: la topbar di arc si attacca ai bordi
+# e mostra nome e pulsanti della finestra (TopBarWindow.qml)
+BorderlessMaximizedWindows=true

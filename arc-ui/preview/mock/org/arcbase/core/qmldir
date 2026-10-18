@@ -1,0 +1,9 @@
+module org.arcbase.core
+singleton Shell 1.0 Shell.qml
+singleton Applications 1.0 Applications.qml
+singleton Notifications 1.0 Notifications.qml
+singleton Media 1.0 Media.qml
+singleton Osd 1.0 Osd.qml
+singleton Search 1.0 Search.qml
+Host 1.0 Host.qml
+HistoryModel 1.0 HistoryModel.qml

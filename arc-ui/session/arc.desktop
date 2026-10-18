@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=arc
+Comment=arc UI su base KDE (Wayland)
+Exec=/usr/bin/startarc
+TryExec=/usr/bin/startarc
+DesktopNames=KDE

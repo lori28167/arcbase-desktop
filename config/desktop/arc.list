@@ -1,0 +1,58 @@
+# arc UI su base KDE (KWin Wayland + servizi KDE) — pacchetti dai repository Arch
+# display-manager: sddm
+#
+# Nessun elemento grafico di Plasma: plasmashell non parte nella sessione arc,
+# al suo posto gira arc-shell (arc-ui/shell, compilata da 11-desktop.sh).
+# I temi (colori, Kvantum, decorazioni, SDDM, lock screen) sono in arc-ui/.
+
+# Sessione KDE: KWin, ksmserver, kded, kscreenlocker, libtaskmanager
+kwin
+kdecoration
+plasma-workspace
+plasma-integration
+layer-shell-qt
+kscreenlocker
+polkit-kde-agent
+xdg-desktop-portal-kde
+xorg-xwayland
+
+# Servizi senza interfaccia propria (i moduli di Impostazioni restano)
+plasma-nm
+plasma-pa
+powerdevil
+kscreen
+bluedevil
+bluez-utils
+systemsettings
+kinfocenter
+
+# Runtime di arc-shell (Qt 6 + KDE Frameworks)
+krunner
+baloo
+kdeplasma-addons
+upower
+libpulse
+qt6-declarative
+qt6-svg
+kservice
+kio
+kwindowsystem
+
+# Aspetto arc: stile Qt, icone (WhiteSur si scarica in 11-desktop.sh), font, cursori
+kvantum
+papirus-icon-theme
+inter-font
+adwaita-cursors
+
+# Login
+sddm
+
+# App
+konsole
+dolphin
+kate
+ark
+spectacle
+gwenview
+okular
+discover

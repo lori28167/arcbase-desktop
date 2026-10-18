@@ -7,8 +7,9 @@
 #  3. installa i pacchetti comuni (firmware, rete, audio, font, browser)
 #     e attiva il repository dei kernel Arcbase con $ARC_KERNEL_PACKAGE
 #  4. installa il desktop scelto (config/desktop/$ARC_DESKTOP.list)
-#  5. abilita display manager e NetworkManager, configura sudo
-#  6. crea il layer Debian e vi installa $ARC_DEBIAN_PACKAGES
+#  5. solo ARC_DESKTOP=arc: compila arc-shell e installa i temi di arc-ui/
+#  6. abilita display manager e NetworkManager, configura sudo
+#  7. crea il layer Debian e vi installa $ARC_DEBIAN_PACKAGES
 # =============================================================================
 STAGE=desktop
 # shellcheck source=../lib/common.sh
@@ -88,6 +89,41 @@ update_caches() {
     return 0
 }
 
+# Desktop arc: shell Qt/QML al posto di plasmashell (compilata qui, con le
+# librerie Qt/KDE appena installate) più temi, sessione e configurazione
+arc_ui() {
+    [[ $ARC_DESKTOP == arc ]] || return 0
+    local build=/tmp/arc-shell-build
+    pac -S --needed cmake extra-cmake-modules
+    rm -rf "$build"
+    cmake -S "$ARCBASE_DIR/arc-ui/shell" -B "$build" \
+        -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release
+    cmake --build "$build"
+    cmake --install "$build"
+    rm -rf "$build"
+    # Decorazione delle finestre (KDecoration3)
+    cmake -S "$ARCBASE_DIR/arc-ui/decoration" -B "$build" \
+        -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release
+    cmake --build "$build"
+    cmake --install "$build"
+    rm -rf "$build"
+    arc_icon_theme
+    "$ARCBASE_DIR/arc-ui/install.sh" --user "$ARC_USER" /
+}
+
+# Icone WhiteSur (versione fissata, checksum verificato): base delle arc icons
+arc_icon_theme() {
+    local work=/tmp/arc-icon-theme
+    rm -rf "$work"
+    mkdir -p "$work"
+    curl -fsSL --retry 3 -o "$work/theme.tar.gz" "$ARC_ICON_THEME_URL"
+    echo "$ARC_ICON_THEME_SHA256  $work/theme.tar.gz" | sha256sum -c - >/dev/null \
+        || die "checksum del tema di icone errato: $ARC_ICON_THEME_URL"
+    tar -C "$work" -xzf "$work/theme.tar.gz"
+    (cd "$work"/*/ && ./install.sh -d /usr/share/icons -t default)
+    rm -rf "$work"
+}
+
 configure_desktop() {
     local dm=''
     if [[ -f $LIST ]]; then
@@ -139,6 +175,7 @@ step common       common_packages
 step kernel-repo  kernel_repo
 step desktop-pkgs desktop_packages
 step caches       update_caches
+step arc-ui       arc_ui
 step desktop-conf configure_desktop
 step debian-layer debian_layer
 step cleanup      cleanup

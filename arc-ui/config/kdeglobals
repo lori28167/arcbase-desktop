@@ -1,0 +1,16 @@
+[General]
+ColorScheme=ArcUI
+font=Inter,10
+menuFont=Inter,10
+toolBarFont=Inter,10
+smallestReadableFont=Inter,8
+fixed=Noto Sans Mono,10
+
+[Icons]
+Theme=arc-icons
+
+[KDE]
+LookAndFeelPackage=org.arcbase.arcui
+widgetStyle=kvantum
+SingleClick=false
+AnimationDurationFactor=0.7

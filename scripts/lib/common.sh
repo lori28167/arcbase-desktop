@@ -203,15 +203,15 @@ install_overlay() {
     chmod 755 /usr/bin/arc /usr/bin/arcbase-* /usr/share/libalpm/scripts/*
 }
 
-# Copia l'albero di build (config, script, rootfs) dentro $LFS/arcbase, così
-# che sia raggiungibile dall'utente lfs e dall'interno del chroot.
+# Copia l'albero di build (config, script, rootfs, arc-ui) dentro $LFS/arcbase,
+# così che sia raggiungibile dall'utente lfs e dall'interno del chroot.
 sync_tree() {
     [[ -n $LFS ]] || return 0
     local dest="$LFS/arcbase"
     [[ $ARCBASE_DIR == "$dest" ]] && return 0
     mkdir -p "$dest"
-    rm -rf "$dest/config" "$dest/scripts" "$dest/rootfs"
-    cp -a "$ARCBASE_DIR/config" "$ARCBASE_DIR/scripts" "$ARCBASE_DIR/rootfs" "$dest/"
+    rm -rf "$dest/config" "$dest/scripts" "$dest/rootfs" "$dest/arc-ui"
+    cp -a "$ARCBASE_DIR/config" "$ARCBASE_DIR/scripts" "$ARCBASE_DIR/rootfs" "$ARCBASE_DIR/arc-ui" "$dest/"
     chmod -R a+rX "$dest"
 }
 

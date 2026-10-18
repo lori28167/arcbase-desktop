@@ -1,0 +1,17 @@
+{
+    "KPackageStructure": "Plasma/LookAndFeel",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "ArcBase"
+            }
+        ],
+        "Description": "arc UI — schermata di blocco e impostazioni grafiche di Arcbase Desktop",
+        "Id": "org.arcbase.arcui",
+        "License": "AGPL-3.0",
+        "Name": "arc UI",
+        "Version": "1.0",
+        "Website": "https://arcbase.org/ui"
+    },
+    "X-Plasma-APIVersion": "2"
+}
