@@ -3,6 +3,7 @@
 // di sistema si cambia dal pannello "Simula".
 pragma Singleton
 import QtQuick
+import "ticly-names.js" as Ticly
 
 QtObject {
     id: shell
@@ -35,8 +36,11 @@ QtObject {
     // Esempio: orologio, calendario e meteo
     property string widgetLayout: "[{\"id\": \"clock\", \"kind\": \"clock\", \"size\": \"m\", \"col\": 0, \"row\": 0}, {\"id\": \"calendar\", \"kind\": \"calendar\", \"size\": \"m\", \"col\": 0, \"row\": 1}, {\"id\": \"weather\", \"kind\": \"weather\", \"size\": \"m\", \"col\": 0, \"row\": 2, \"options\": {\"city\": \"Cortina d'Ampezzo\"}}]"
     // Esempio: due cartelle già pronte
-    property string launchpadLayout: "[{\"type\": \"app\", \"id\": \"system-file-manager.desktop\"}, {\"type\": \"app\", \"id\": \"firefox.desktop\"}, {\"type\": \"app\", \"id\": \"utilities-terminal.desktop\"}, {\"type\": \"folder\", \"id\": \"folder-grafica\", \"name\": \"Grafica\", \"apps\": [\"gimp.desktop\", \"krita.desktop\", \"inkscape.desktop\", \"blender.desktop\", \"darktable.desktop\", \"shotwell.desktop\"]}, {\"type\": \"folder\", \"id\": \"folder-internet\", \"name\": \"Internet\", \"apps\": [\"telegram.desktop\", \"discord.desktop\", \"signal.desktop\", \"zoom.desktop\", \"thunderbird.desktop\", \"chromium.desktop\", \"filezilla.desktop\", \"transmission.desktop\", \"bitwarden.desktop\", \"keepassxc.desktop\"]}]"
+    property string launchpadLayout: "[{\"type\": \"app\", \"id\": \"system-file-manager.desktop\"}, {\"type\": \"app\", \"id\": \"firefox.desktop\"}, {\"type\": \"app\", \"id\": \"utilities-terminal.desktop\"}, {\"type\": \"folder\", \"id\": \"folder-grafica\", \"name\": \"Grafica\", \"apps\": [\"gimp.desktop\", \"org.kde.krita.desktop\", \"inkscape.desktop\", \"blender.desktop\", \"darktable.desktop\", \"shotwell.desktop\"]}, {\"type\": \"folder\", \"id\": \"folder-internet\", \"name\": \"Internet\", \"apps\": [\"telegram.desktop\", \"discord.desktop\", \"signal.desktop\", \"zoom.desktop\", \"thunderbird.desktop\", \"chromium.desktop\", \"filezilla.desktop\", \"transmission.desktop\", \"bitwarden.desktop\", \"keepassxc.desktop\"]}]"
     property bool nightLight: false
+    property var controlTiles: ["wifi", "bluetooth", "dnd", "nightlight"]
+    readonly property string avatar: ""
+    readonly property string hostName: "arcbase"
     property var dockLaunchers: ["applications:org.kde.dolphin.desktop", "applications:firefox.desktop",
         "applications:org.kde.konsole.desktop", "applications:org.kde.kate.desktop",
         "applications:org.kde.discover.desktop", "applications:systemsettings.desktop"]
@@ -44,8 +48,10 @@ QtObject {
     // Come KService: nome dell'icona dal desktop file
     readonly property var icons: ({
         "org.kde.dolphin": "system-file-manager", "firefox": "firefox", "org.kde.konsole": "utilities-terminal",
-        "org.kde.kate": "kate", "org.kde.discover": "plasmadiscover", "systemsettings": "preferences-system"
+        "org.kde.kate": "org.kde.kate", "org.kde.discover": "plasmadiscover", "systemsettings": "preferences-system"
     })
+    readonly property var ticly: new Set(Ticly.names)
+    function hasOwnShape(name) { return ticly.has(name); }
     function iconForApp(appId) { return icons[appId] || appId; }
 
     function configureLayer(window, scope, layer, anchors, exclusiveZone, keyboard, mt, mr, mb, ml) {
@@ -82,7 +88,8 @@ QtObject {
     function setInputRegion(window, rects) {}
 
     function wallpapers() {
-        return [{ url: wallpaperUrl, name: "dolomiti" }];
+        const dir = wallpaperUrl.substring(0, wallpaperUrl.lastIndexOf("/") + 1);
+        return ["dolomiti", "dolomiti-sera", "kronplatz", "tre-cime"].map(n => ({ url: dir + n + ".jpg", name: n }));
     }
     function scanWifi() {
         wifiNetworks = [

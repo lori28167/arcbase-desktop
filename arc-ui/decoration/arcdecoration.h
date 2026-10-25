@@ -13,12 +13,18 @@ namespace Arc
 // Misure del design (pixel logici)
 namespace Metrics
 {
-constexpr qreal titleHeight = 38;
-constexpr qreal cornerRadius = 18;
-constexpr qreal titleLeft = 17;       // margine del nome dell'app
-constexpr qreal buttonSize = 20;
+// Barra: una riga di pillole dentro il vetro della finestra (nome dell'app,
+// menu, pulsanti), poi il contenuto
+constexpr qreal margin = 8;           // dal bordo della finestra alle pillole
+constexpr qreal pillHeight = 40;
+constexpr qreal pillSpacing = 8;
+constexpr qreal pillPadding = 16;     // testo dentro le pillole
+constexpr qreal titleHeight = margin + pillHeight + margin;
+constexpr qreal cornerRadius = pillHeight / 2 + margin;   // concentrico: pillole (20) + margine (8)
+constexpr qreal buttonSize = 26;
 constexpr qreal buttonSpacing = 8;
-constexpr qreal buttonsRight = 11;    // margine destro dei pulsanti
+constexpr qreal buttonsPadding = (pillHeight - buttonSize) / 2;
+constexpr qreal contentRadius = cornerRadius - margin;    // pannelli del contenuto (Kvantum)
 constexpr qreal resizeBorder = 6;     // bordo invisibile per ridimensionare
 constexpr int shadowSize = 48;
 constexpr int shadowOffset = 10;
@@ -35,6 +41,11 @@ public:
     bool init() override;
 
     bool isMaximized() const;
+    // App di sistema (Dolphin, Impostazioni, app ArcScript...): il nome è in
+    // una pillola e c'è la pillola del menu; le altre app hanno il nome semplice
+    bool isSystemApp() const;
+    QRectF namePill() const;
+    QRectF buttonsPill() const;
 
 private:
     void updateLayout();
@@ -42,6 +53,7 @@ private:
     void updateShadow();
 
     KDecoration3::DecorationButtonGroup *m_buttons = nullptr;
+    KDecoration3::DecorationButton *m_menu = nullptr;   // pillola del menu dell'app
 };
 
 class Button : public KDecoration3::DecorationButton

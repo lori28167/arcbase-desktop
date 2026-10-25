@@ -58,13 +58,23 @@ Window {
     }
 
     function updateBlur() {
-        if (mode === "launcher" || mode === "wallpaper") {
-            Shell.setBlur(win, [{ x: 0, y: 0, width: win.width, height: win.height, radius: 0 }]);
+        const full = [{ x: 0, y: 0, width: win.width, height: win.height, radius: 0 }];
+        if (mode === "launcher") {
+            Shell.setBlur(win, full);
+            Shell.setInputRegion(win, full);
         } else if (panelLoader.item) {
             const p = panelLoader.item;
-            Shell.setBlur(win, [{ x: panelLoader.x, y: panelLoader.y, width: p.width, height: p.height, radius: p.radius }]);
+            // Pannelli fatti di più parti (centro di controllo, centro
+            // notifiche) dicono quali rettangoli sfocare
+            const rects = p.blurRects ? p.blurRects : [{ x: 0, y: 0, width: p.width, height: p.height, radius: p.radius }];
+            const placed = rects.map(r => ({ x: panelLoader.x + r.x, y: panelLoader.y + r.y, width: r.width, height: r.height, radius: r.radius, corners: r.corners }));
+            Shell.setBlur(win, placed);
+            // Fuori dal pannello i clic vanno al velo (VeilWindow, lo chiude)
+            // o a topbar e dock, che restano sopra al velo
+            Shell.setInputRegion(win, placed);
         } else {
             Shell.setBlur(win, []);
+            Shell.setInputRegion(win, full);
         }
     }
     onWidthChanged: Qt.callLater(updateBlur)
@@ -78,16 +88,11 @@ Window {
         Behavior on opacity { NumberAnimation { duration: Theme.normal - 40; easing.type: Easing.OutCubic } }
         Keys.onEscapePressed: Shell.hideOverlay()
 
-        // Velo dietro la scelta dello sfondo (il Launchpad ha il suo)
-        Rectangle {
-            anchors.fill: parent
-            color: Theme.scrim
-            visible: win.mode === "wallpaper"
-        }
         MouseArea {
             anchors.fill: parent
             onClicked: Shell.hideOverlay()
         }
+
 
         Loader {
             id: launcherLoader
@@ -97,17 +102,12 @@ Window {
             sourceComponent: Launchpad { closing: win.closing }
         }
 
-        Loader {
-            anchors.fill: parent
-            active: win.mode === "wallpaper"
-            focus: active
-            sourceComponent: WallpaperPicker {}
-        }
 
-        // Pannelli sotto la topbar, a destra
+        // Pannelli sotto la topbar: centro di controllo a destra, centro
+        // notifiche al centro sotto l'orario (dove compaiono le notifiche)
         Loader {
             id: panelLoader
-            x: parent.width - width - Theme.edge
+            x: win.mode === "notifications" ? Math.round((parent.width - width) / 2) : parent.width - width - Theme.edge
             y: Theme.panelTop
             active: win.mode === "control" || win.mode === "notifications"
             focus: active
@@ -115,6 +115,11 @@ Window {
             onLoaded: Qt.callLater(win.updateBlur)
             onHeightChanged: Qt.callLater(win.updateBlur)
             onWidthChanged: Qt.callLater(win.updateBlur)
+            Connections {
+                target: panelLoader.item
+                ignoreUnknownSignals: true
+                function onBlurRectsChanged() { Qt.callLater(win.updateBlur); }
+            }
         }
         Component {
             id: controlComponent

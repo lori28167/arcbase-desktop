@@ -50,6 +50,32 @@ Window {
 
     // ------------------------------------------------------------ disposizione
     ListModel { id: layout }
+    // Cambia a ogni modifica della griglia: ricalcola i vicini dei widget
+    property int layoutRev: 0
+    Connections {
+        target: layout
+        function onDataChanged() { win.layoutRev++; }
+        function onRowsInserted() { win.layoutRev++; }
+        function onRowsRemoved() { win.layoutRev++; }
+        function onModelReset() { win.layoutRev++; }
+    }
+    // C'è un widget attaccato al lato (dx, dy) di quello in col/row?
+    // Widget vicini formano un gruppo: gli angoli che si guardano sono piccoli
+    function hasNeighbor(wid, col, row, size, dx, dy) {
+        const [w, h] = span(size);
+        for (let i = 0; i < layout.count; ++i) {
+            const o = layout.get(i);
+            if (o.wid === wid) continue;
+            const [ow, oh] = span(o.size);
+            const overlapX = col < o.col + ow && o.col < col + w;
+            const overlapY = row < o.row + oh && o.row < row + h;
+            if (dx < 0 && o.col + ow === col && overlapY) return true;
+            if (dx > 0 && o.col === col + w && overlapY) return true;
+            if (dy < 0 && o.row + oh === row && overlapX) return true;
+            if (dy > 0 && o.row === row + h && overlapX) return true;
+        }
+        return false;
+    }
 
     function span(size) {
         return size === "s" ? [1, 1] : size === "l" ? [2, 2] : [2, 1];
@@ -167,7 +193,7 @@ Window {
         const rects = [];
         for (let i = 0; i < widgets.count; ++i) {
             const f = widgets.itemAt(i);
-            if (f) rects.push({ x: f.x, y: f.y, width: f.width, height: f.height, radius: f.radius });
+            if (f) rects.push({ x: f.x, y: f.y, width: f.width, height: f.height, radius: f.radius, corners: f.corners });
         }
         for (const p of [toolbar, gallery, settings, menu]) {
             if (p.visible) rects.push({ x: p.x, y: p.y, width: p.width, height: p.height, radius: p.radius });
@@ -201,7 +227,6 @@ Window {
                     { text: win.editing ? "Fine modifica" : "Modifica widget", icon: "pencil", action: () => win.editing = !win.editing },
                     { text: "Aggiungi widget…", icon: "plus", action: () => { win.editing = true; win.galleryOpen = true; } },
                     { separator: true },
-                    { text: "Cambia sfondo…", icon: "image", action: () => Shell.overlay = "wallpaper" },
                     { text: "Impostazioni schermo", icon: "display", action: () => Shell.openSettings("kcm_kscreen") },
                     { text: "Impostazioni", icon: "settings", action: () => Shell.openSettings() }
                 ]);
@@ -259,6 +284,12 @@ Window {
             required property string optionsJson
 
             readonly property var spanSize: win.span(size)
+            corners: {
+                win.layoutRev;
+                const free = (dx, dy) => dragging || !win.hasNeighbor(wid, col, row, size, dx, dy);
+                return Theme.groupCorners(Theme.widgetRadius, free(0, -1), free(1, 0), free(0, 1), free(-1, 0));
+            }
+            onCornersChanged: Qt.callLater(win.updateBlur)
             readonly property real homeX: win.originX + col * win.stepX
             readonly property real homeY: win.originY + row * win.stepY
 
@@ -425,7 +456,7 @@ Window {
                     onClicked: win.setKind(win.settingsFor, modelData.kind)
                     Rectangle {
                         anchors.fill: parent
-                        radius: Theme.rSm
+                        radius: Theme.inner(Theme.rXl, 14)
                         color: choice.selected ? Theme.surface3 : choice.containsMouse ? Theme.surface2 : "transparent"
                     }
                     ArcIcon { x: 10; anchors.verticalCenter: parent.verticalCenter; width: 17; height: 17; name: choice.modelData.icon; color: Theme.text }
@@ -465,7 +496,7 @@ Window {
                     visible: settings.current !== null && settings.current.kind === "weather"
                     width: parent.width
                     height: 36
-                    radius: Theme.rSm
+                    radius: Theme.inner(Theme.rXl, 14)
                     color: Theme.surface2
                     border.width: 1
                     border.color: cityInput.activeFocus ? Theme.borderHi : Theme.border

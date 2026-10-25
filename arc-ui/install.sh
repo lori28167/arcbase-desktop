@@ -31,17 +31,41 @@ put() { # put MODE SORGENTE DESTINAZIONE (relativa a DEST)
     install -m "$1" "$2" "$DEST/$3"
 }
 
-# --- Temi generati (Kvantum, decorazioni KWin, arc icons) --------------------
+# --- Temi generati (Kvantum, decorazioni KWin) --------------------
 python3 "$HERE/theme/generate.py" --out "$DEST/usr/share"
-python3 "$HERE/icons/generate.py" --out "$DEST/usr/share"
+
+# --- Tema icone predefinito: Ticly Sequoia (archivio fissato con checksum) ----
+# Si installa così com'è, senza toccare le icone.
+ticly=$HERE/icons/ticly-sequoia
+(cd "$ticly" && { sha256sum -c SHA256SUMS 2>/dev/null || shasum -a 256 -c SHA256SUMS; } >/dev/null) \
+    || { echo "install.sh: checksum di ticly-sequoia.tar.gz errato" >&2; exit 1; }
+rm -rf "$DEST/usr/share/icons/ticly-sequoia"
+mkdir -p "$DEST/usr/share/icons"
+tar -xzf "$ticly/ticly-sequoia.tar.gz" -C "$DEST/usr/share/icons" --no-same-owner \
+    --exclude ticly-sequoia/install.sh
+# Icone aggiunte al tema (es. Launchpad): in cartelle già elencate in index.theme
+cp -R "$ticly/extra/." "$DEST/usr/share/icons/ticly-sequoia/"
+chmod -R a+rX "$DEST/usr/share/icons/ticly-sequoia"
+if command -v gtk-update-icon-cache >/dev/null; then
+    gtk-update-icon-cache -q -f -t "$DEST/usr/share/icons/ticly-sequoia" || true
+fi
 
 # --- File condivisi ------------------------------------------------------------
 share=usr/share
-put 644 "$HERE/wallpaper/dolomiti.jpg"  "$share/arcbase/arc-ui/wallpaper/dolomiti.jpg"
+for w in "$HERE"/wallpaper/*.jpg; do
+    put 644 "$w" "$share/arcbase/arc-ui/wallpaper/${w##*/}"
+done
 put 644 "$HERE/theme/ArcUI.colors"      "$share/color-schemes/ArcUI.colors"
+# Font di sistema: Google Sans Flex (OFL 1.1, da github.com/google/fonts)
+put 644 "$HERE/fonts/GoogleSansFlex.ttf" "$share/fonts/google-sans-flex/GoogleSansFlex.ttf"
+put 644 "$HERE/fonts/OFL.txt"            "$share/licenses/google-sans-flex/OFL.txt"
+if [[ -z $DEST ]] && command -v fc-cache >/dev/null; then
+    fc-cache -f "/$share/fonts/google-sans-flex" >/dev/null || true
+fi
 
 lnf=$share/plasma/look-and-feel/org.arcbase.arcui
 put 644 "$HERE/theme/lookandfeel/metadata.json"                     "$lnf/metadata.json"
+put 644 "$HERE/theme/lookandfeel/contents/defaults"                 "$lnf/contents/defaults"
 put 644 "$HERE/theme/lookandfeel/contents/lockscreen/LockScreen.qml" "$lnf/contents/lockscreen/LockScreen.qml"
 put 644 "$HERE/theme/lookandfeel/contents/logout/Logout.qml"         "$lnf/contents/logout/Logout.qml"
 

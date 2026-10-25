@@ -8,7 +8,8 @@ import "."
 Item {
     id: item
 
-    property string iconSource
+    property string iconName
+    property string glyph
     property string label
     property bool running: false
     property bool active: false
@@ -55,14 +56,11 @@ Item {
             }
         ]
 
-        Image {
+        AppIcon {
             anchors.fill: parent
-            source: item.iconSource
-            sourceSize.width: Theme.dockIcon * 2
-            sourceSize.height: Theme.dockIcon * 2
-            smooth: true
-            mipmap: true
-            opacity: area.pressed ? 0.75 : 1
+            name: item.iconName
+            glyph: item.glyph
+            pressedOpacity: area.pressed ? 0.75 : 1
         }
 
         MouseArea {
@@ -87,10 +85,10 @@ Item {
     Rectangle {
         x: item.width / 2 - width / 2 + item.shift
         anchors.top: parent.bottom
-        anchors.topMargin: 4
-        width: item.active ? 12 : 5
-        height: 5
-        radius: 2.5
+        anchors.topMargin: (Theme.dockPadding - height) / 2
+        width: item.active ? 10 : 4
+        height: 4
+        radius: 2
         color: Qt.rgba(1, 1, 1, item.active ? 0.95 : 0.65)
         visible: item.running
         Behavior on width { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }

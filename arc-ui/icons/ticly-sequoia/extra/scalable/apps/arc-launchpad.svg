@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7C86FF"/><stop offset="1" stop-color="#8A4FE8"/></linearGradient>
+    <linearGradient id="topRim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.35"/><stop offset="0.25" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="bottomRim" x1="0" y1="0" x2="0" y2="1"><stop offset="0.75" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.18"/></linearGradient>
+    <linearGradient id="innerShade" x1="0" y1="0" x2="0" y2="1"><stop offset="0.7" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.14"/></linearGradient>
+    <linearGradient id="glass" gradientUnits="userSpaceOnUse" x1="0" y1="240" x2="0" y2="784"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E6ECF5"/></linearGradient>
+  </defs>
+  <rect width="824" height="824" x="100" y="100" rx="225" fill="url(#bg)"/>
+  <rect width="824" height="824" x="100" y="100" rx="225" fill="url(#innerShade)"/>
+  <rect width="818" height="818" x="103" y="103" rx="222" fill="none" stroke="url(#topRim)" stroke-width="6"/>
+  <rect width="818" height="818" x="103" y="103" rx="222" fill="none" stroke="url(#bottomRim)" stroke-width="6"/>
+  <g fill="url(#glass)" fill-opacity="0.55">
+    <rect x="240" y="240" width="152" height="152" rx="46"/>
+    <rect x="436" y="240" width="152" height="152" rx="46"/>
+    <rect x="632" y="240" width="152" height="152" rx="46"/>
+    <rect x="240" y="436" width="152" height="152" rx="46"/>
+    <rect x="632" y="436" width="152" height="152" rx="46"/>
+    <rect x="240" y="632" width="152" height="152" rx="46"/>
+    <rect x="436" y="632" width="152" height="152" rx="46"/>
+    <rect x="632" y="632" width="152" height="152" rx="46"/>
+  </g>
+  <rect x="436" y="436" width="152" height="152" rx="46" fill="#FFFFFF"/>
+</svg>

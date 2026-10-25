@@ -45,10 +45,25 @@ QtObject {
     readonly property int rMd: 14
     readonly property int rLg: 20
     readonly property int rXl: 28
+    // Raggi concentrici: in un gruppo annidato l'elemento interno ha il
+    // raggio di quello esterno meno la distanza tra i due bordi, così le
+    // curve restano parallele (finestre, pannelli, menu, widget, dock)
+    function inner(outer, pad) { return Math.max(0, outer - pad); }
+    function outer(inner, pad) { return inner + pad; }
+    // Elementi affiancati in un gruppo (barra laterale | contenuto): gli
+    // angoli rivolti al vicino restano piccoli
+    readonly property int groupInner: 6
+    // Angoli di un elemento in un gruppo: grande (concentrico) solo dove
+    // entrambi i lati dell'angolo sono sul bordo del gruppo, piccolo dove
+    // c'è un vicino. Ordine: [alto-sx, alto-dx, basso-dx, basso-sx]
+    function groupCorners(outer, top, right, bottom, left) {
+        const c = (a, b) => a && b ? outer : Math.min(groupInner, outer);
+        return [c(top, left), c(top, right), c(bottom, right), c(bottom, left)];
+    }
     readonly property int r2xl: 36
 
     // --- Tipografia
-    readonly property string font: "Inter"
+    readonly property string font: "Google Sans Flex"
 
     // --- Misure della shell (mockup 1440×1024)
     readonly property int edge: 24          // distanza dai bordi dello schermo
@@ -63,15 +78,21 @@ QtObject {
     readonly property int dockIcon: 54
     readonly property int dockPadding: 10
     readonly property int dockSpacing: 8
-    readonly property int dockHeight: dockIcon + 2 * dockPadding + 6
-    readonly property int dockRadius: 24
+    // Margine uguale su tutti i lati; angoli concentrici a quelli delle icone:
+    // raggio del corpo dell'icona + distanza dal bordo della dock
+    readonly property int dockHeight: dockIcon + 2 * dockPadding
+    readonly property int dockRadius: Math.round(dockIcon * ((1 - iconBody) / 2 + iconBody * iconCorner) + dockPadding)
+
+    // Icone delle app (Ticly Sequoia): corpo squircle all'80% del riquadro
+    readonly property real iconBody: 0.797
+    readonly property real iconCorner: 0.2237
     readonly property real dockZoom: 1.6           // ingrandimento massimo
     readonly property real dockZoomRange: 2.6      // icone coinvolte per lato
 
     // Widget: griglia come le card del mockup (S = 1×1, M = 2×1, L = 2×2)
     readonly property int cellWidth: 179
     readonly property int cellHeight: 185
-    readonly property int cellGap: 16
+    readonly property int cellGap: 8         // widget vicini: un gruppo
     readonly property int widgetRadius: 26
 
     // --- Movimento: --spring, --ease-out

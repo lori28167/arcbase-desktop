@@ -88,7 +88,7 @@ Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
             text: Qt.formatTime(root.now, "HH:mm")
             color: root.text
-            font.family: "Inter"
+            font.family: "Google Sans Flex"
             font.pixelSize: 112
             font.weight: Font.Light
             font.letterSpacing: -4
@@ -100,7 +100,7 @@ Rectangle {
                 return s.charAt(0).toUpperCase() + s.slice(1);
             }
             color: root.text
-            font.family: "Inter"
+            font.family: "Google Sans Flex"
             font.pixelSize: 22
         }
     }
@@ -130,7 +130,7 @@ Rectangle {
             y: 20
             text: root.userName
             color: root.text
-            font.family: "Inter"
+            font.family: "Google Sans Flex"
             font.pixelSize: 17
             font.weight: Font.DemiBold
         }
@@ -149,7 +149,7 @@ Rectangle {
                 echoMode: TextInput.Password
                 passwordCharacter: "•"
                 color: root.text
-                font.family: "Inter"
+                font.family: "Google Sans Flex"
                 font.pixelSize: 16
                 clip: true
                 focus: true
@@ -172,7 +172,7 @@ Rectangle {
         anchors.top: card.bottom
         anchors.topMargin: 14
         color: "#fca5a5"
-        font.family: "Inter"
+        font.family: "Google Sans Flex"
         font.pixelSize: 13
     }
 

@@ -12,7 +12,7 @@ S     := scripts
 
 .PHONY: help all check prepare download toolchain temp-tools chroot-tools \
         base-system merge-usr config kernel package-managers desktop image \
-        iso iso-test install-test enter umount lint test clean-stamps
+        iso iso-test iso-run install-test enter umount lint test clean-stamps
 
 help:
 	@echo "Arcbase Desktop — LFS + pacman (Arch) + apt (Debian)"
@@ -33,6 +33,7 @@ help:
 	@echo "  image             immagine disco avviabile in out/"
 	@echo "  iso               ISO live ibrida (BIOS+UEFI, CD/USB) in out/"
 	@echo "  iso-test          avvia la ISO in QEMU (BIOS e UEFI), senza root"
+	@echo "  iso-run           avvia la ISO in QEMU con una finestra (anche su macOS)"
 	@echo "  install-test      installa dalla ISO su un disco virtuale e lo riavvia (QEMU)"
 	@echo
 	@echo "Altro:"
@@ -89,6 +90,9 @@ iso:
 iso-test:
 	$(S)/14-iso-test.sh
 
+iso-run:
+	$(S)/16-iso-run.sh $(ARGS)
+
 install-test:
 	$(S)/15-install-test.sh
 
@@ -104,7 +108,7 @@ lint:
 	    rootfs/usr/lib/arcbase/*.sh rootfs/usr/share/libalpm/scripts/* \
 	    tools/kernel-mirror/arcbase-kbuild tools/kernel-mirror/arcbase-kbuild-ctl \
 	    tools/kernel-mirror/install.sh \
-	    arc-ui/install.sh arc-ui/session/startarc arc-ui/preview/run.sh \
+	    arc-ui/install.sh arc-ui/session/startarc arc-ui/preview/run.sh arc-ui/preview/trailer.sh \
 	    tests/*.sh
 
 test:

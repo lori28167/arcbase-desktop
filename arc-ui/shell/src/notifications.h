@@ -49,6 +49,8 @@ public:
     QVariant data(const QModelIndex &index, int role) const override;
     QHash<int, QByteArray> roleNames() const override;
     int count() const { return m_items.size(); }
+    // Una riga con i nomi dei ruoli (come ListModel.get, per raggruppare in QML)
+    Q_INVOKABLE QVariantMap get(int row) const;
 
 Q_SIGNALS:
     void countChanged();

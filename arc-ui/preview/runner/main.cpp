@@ -3,9 +3,14 @@
 // e di KDE, disegna icone segnaposto e ricarica tutto quando un file cambia.
 //
 // Uso: arc-preview <file.qml> <mock> <out> <repo>
+#include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
+#include <QTextStream>
+#include <QThreadPool>
 #include <QFile>
 #include <QFileSystemWatcher>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QHash>
 #include <QPainter>
@@ -41,6 +46,15 @@ public:
                 svg = dir + QLatin1Char('/') + id + QStringLiteral(".svg");
                 break;
             }
+            // Ticly Sequoia ha le app anche solo in PNG
+            const QString png = dir + QLatin1Char('/') + id + QStringLiteral(".png");
+            if (QFile::exists(png)) {
+                QImage img = QImage(png).scaled(s, s, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                if (size) {
+                    *size = img.size();
+                }
+                return img;
+            }
         }
         if (!svg.isEmpty()) {
             QImage img(s, s, QImage::Format_ARGB32_Premultiplied);
@@ -70,10 +84,10 @@ public:
         g.setColorAt(0, pair.first);
         g.setColorAt(1, pair.second);
         QPainterPath path;
-        path.addRoundedRect(QRectF(s * 0.06, s * 0.06, s * 0.88, s * 0.88), s * 0.22, s * 0.22);
+        path.addEllipse(QRectF(s * 0.04, s * 0.04, s * 0.92, s * 0.92));
         p.fillPath(path, g);
         p.setPen(Qt::white);
-        QFont f(QStringLiteral("Inter"));
+        QFont f(QStringLiteral("Google Sans Flex"));
         f.setPixelSize(s * 0.42);
         f.setWeight(QFont::DemiBold);
         p.setFont(f);
@@ -128,6 +142,52 @@ public:
             qInfo("schermate salvate: %d", n);
         });
         m_grab.start();
+
+        m_record.setInterval(33);
+        m_record.setTimerType(Qt::PreciseTimer);
+        connect(&m_record, &QTimer::timeout, this, [this] {
+            if (!m_engine || m_engine->rootObjects().isEmpty()) {
+                return;
+            }
+            auto *window = qobject_cast<QQuickWindow *>(m_engine->rootObjects().first());
+            if (!window) {
+                return;
+            }
+            const int n = m_frames.size();
+            m_frames << m_clock.elapsed();
+            const QImage image = window->grabWindow();
+            const QString path = m_out + QStringLiteral("/trailer/frame-%1.jpg").arg(n, 5, 10, QLatin1Char('0'));
+            QThreadPool::globalInstance()->start([image, path] {
+                image.scaled(1920, 1080, Qt::IgnoreAspectRatio, Qt::SmoothTransformation).save(path, "JPG", 94);
+            });
+        });
+    }
+
+    // Trailer: salva la finestra principale ~30 volte al secondo in
+    // <out>/trailer/frame-NNNNN.jpg e i tempi reali in frames.ffconcat
+    Q_INVOKABLE void startRecording()
+    {
+        m_frames.clear();
+        QDir(m_out + QStringLiteral("/trailer")).removeRecursively();
+        QDir().mkpath(m_out + QStringLiteral("/trailer"));
+        m_clock.start();
+        m_record.start();
+    }
+    Q_INVOKABLE void stopRecording()
+    {
+        m_record.stop();
+        QThreadPool::globalInstance()->waitForDone();
+        QFile list(m_out + QStringLiteral("/trailer/frames.ffconcat"));
+        if (list.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&list);
+            out << "ffconcat version 1.0\n";
+            for (int i = 0; i < m_frames.size(); ++i) {
+                const qint64 next = i + 1 < m_frames.size() ? m_frames[i + 1] : m_frames[i] + 33;
+                out << QStringLiteral("file frame-%1.jpg\nduration %2\n").arg(i, 5, 10, QLatin1Char('0')).arg((next - m_frames[i]) / 1000.0, 0, 'f', 3);
+            }
+            out << QStringLiteral("file frame-%1.jpg\n").arg(m_frames.size() - 1, 5, 10, QLatin1Char('0'));
+        }
+        qInfo("trailer: %lld fotogrammi in %lld ms", qint64(m_frames.size()), m_frames.isEmpty() ? 0 : m_frames.last());
     }
 
     Q_INVOKABLE void reload()
@@ -153,6 +213,7 @@ private:
         ctx->setContextProperty(QStringLiteral("preview"), this);
         ctx->setContextProperty(QStringLiteral("outDir"), m_out);
         ctx->setContextProperty(QStringLiteral("shots"), qEnvironmentVariableIsSet("ARC_PREVIEW_SHOTS"));
+        ctx->setContextProperty(QStringLiteral("trailerMode"), qEnvironmentVariableIsSet("ARC_PREVIEW_TRAILER"));
         ctx->setContextProperty(QStringLiteral("animShots"), qEnvironmentVariable("ARC_PREVIEW_ANIM"));
         ctx->setContextProperty(QStringLiteral("previewGeometry"), m_geometry);
         ctx->setContextProperty(QStringLiteral("mainUrl"), QUrl::fromLocalFile(m_repo + QStringLiteral("/arc-ui/shell/qml/Main.qml")));
@@ -192,6 +253,9 @@ private:
     QFileSystemWatcher m_watcher;
     QTimer m_debounce;
     QTimer m_grab;
+    QTimer m_record;
+    QElapsedTimer m_clock;
+    QList<qint64> m_frames;
     QRect m_geometry;
 };
 
@@ -203,6 +267,9 @@ int main(int argc, char *argv[])
         qCritical("uso: arc-preview <file.qml> <mock> <out> <repo>");
         return 2;
     }
+    // Il font della distro (arc-ui/fonts), come se fosse installato
+    QFontDatabase::addApplicationFont(QString::fromLocal8Bit(argv[4]) + QStringLiteral("/arc-ui/fonts/GoogleSansFlex.ttf"));
+    QGuiApplication::setFont(QFont(QStringLiteral("Google Sans Flex")));
     Preview preview(QString::fromLocal8Bit(argv[1]), QString::fromLocal8Bit(argv[2]), QString::fromLocal8Bit(argv[3]),
                     QString::fromLocal8Bit(argv[4]));
     preview.reload();

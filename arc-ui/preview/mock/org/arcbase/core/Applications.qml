@@ -9,15 +9,15 @@ ListModel {
     signal launched()
 
     readonly property var all: [
-        ["Ark", "ark"], ["Calcolatrice", "accessories-calculator"], ["Centro informazioni", "hwinfo"],
+        ["Ark", "org.kde.ark"], ["Calcolatrice", "accessories-calculator"], ["Centro informazioni", "org.kde.kinfocenter"],
         ["Discover", "plasmadiscover"], ["Dolphin", "system-file-manager"], ["Editor di testo", "accessories-text-editor"],
-        ["Firefox", "firefox"], ["Gwenview", "gwenview"], ["Impostazioni di sistema", "preferences-system"],
-        ["Installa Arcbase Desktop", "system-software-install"], ["Kate", "kate"], ["Konsole", "utilities-terminal"],
-        ["Monitor di sistema", "utilities-system-monitor"], ["Okular", "okular"], ["Spectacle", "spectacle"],
+        ["Firefox", "firefox"], ["Gwenview", "org.kde.gwenview"], ["Impostazioni di sistema", "preferences-system"],
+        ["Installa Arcbase Desktop", "system-software-install"], ["Kate", "org.kde.kate"], ["Konsole", "utilities-terminal"],
+        ["Monitor di sistema", "utilities-system-monitor"], ["Okular", "org.kde.okular"], ["Spectacle", "org.kde.spectacle"],
         ["GIMP (Debian)", "gimp"], ["LibreOffice Writer", "libreoffice-writer"], ["VLC", "vlc"],
         ["Thunderbird", "thunderbird"], ["Visual Studio Code", "code"], ["Blender", "blender"],
-        ["Inkscape", "inkscape"], ["Krita", "krita"], ["OBS Studio", "obs"], ["Steam", "steam"],
-        ["Telegram", "telegram"], ["Audacity", "audacity"], ["Kdenlive", "kdenlive"], ["Shotwell", "shotwell"],
+        ["Inkscape", "inkscape"], ["Krita", "org.kde.krita"], ["OBS Studio", "obs"], ["Steam", "steam"],
+        ["Telegram", "telegram"], ["Audacity", "audacity"], ["Kdenlive", "org.kde.kdenlive"], ["Shotwell", "shotwell"],
         ["Transmission", "transmission"], ["Filezilla", "filezilla"], ["Discord", "discord"], ["Zoom", "zoom"],
         ["Signal", "signal"], ["Bitwarden", "bitwarden"], ["Spotify", "spotify"], ["Chromium", "chromium"],
         ["KeePassXC", "keepassxc"], ["Calibre", "calibre"], ["Darktable", "darktable"]
@@ -29,13 +29,13 @@ ListModel {
         return a ? { name: a[0], genericName: "", iconName: a[1], storageId: id } : ({});
     }
     readonly property var groups: ({
-        "Graphics": ["gimp", "krita", "inkscape", "blender", "darktable", "gwenview", "shotwell"],
-        "AudioVideo": ["vlc", "audacity", "kdenlive", "spotify", "obs"],
+        "Graphics": ["gimp", "org.kde.krita", "inkscape", "blender", "darktable", "org.kde.gwenview", "shotwell"],
+        "AudioVideo": ["vlc", "audacity", "org.kde.kdenlive", "spotify", "obs"],
         "Network": ["firefox", "thunderbird", "telegram", "discord", "zoom", "signal", "chromium", "filezilla", "transmission"],
-        "Office": ["libreoffice-writer", "okular", "calibre"],
-        "Development": ["utilities-terminal", "code", "kate"],
-        "System": ["preferences-system", "hwinfo", "utilities-system-monitor", "plasmadiscover", "system-software-install", "system-file-manager"],
-        "Utility": ["accessories-calculator", "accessories-text-editor", "ark", "spectacle", "keepassxc", "bitwarden"],
+        "Office": ["libreoffice-writer", "org.kde.okular", "calibre"],
+        "Development": ["utilities-terminal", "code", "org.kde.kate"],
+        "System": ["preferences-system", "org.kde.kinfocenter", "utilities-system-monitor", "plasmadiscover", "system-software-install", "system-file-manager"],
+        "Utility": ["accessories-calculator", "accessories-text-editor", "org.kde.ark", "org.kde.spectacle", "keepassxc", "bitwarden"],
         "Game": ["steam"]
     })
     function categories(id) {

@@ -5,6 +5,7 @@
 #include <KDecoration3/DecorationShadow>
 #include <KPluginFactory>
 
+#include <QFontMetricsF>
 #include <QPainter>
 #include <QPainterPath>
 #include <QRegion>
@@ -20,17 +21,23 @@ using KDecoration3::DecorationButtonType;
 
 namespace
 {
-// Barra del titolo: vetro chiaro sopra la sfocatura di KWin, testo scuro
-const QColor titleActive(255, 255, 255, 82);
-const QColor titleInactive(255, 255, 255, 46);
-const QColor textActive(17, 17, 20, 235);
-const QColor textInactive(17, 17, 20, 120);
+// Barra del titolo: lo stesso vetro scuro dei pannelli arc (Theme.material)
+// sopra la sfocatura di KWin, testo chiaro
+const QColor titleActive(14, 12, 20, 158);
+const QColor titleInactive(14, 12, 20, 190);
+const QColor textActive(255, 255, 255, 240);
+const QColor textInactive(255, 255, 255, 130);
 const QColor outline(255, 255, 255, 34);
 
-// Pulsanti: cerchi scuri con simbolo bianco
-const QColor buttonNormal(58, 58, 62, 225);
-const QColor buttonHover(34, 34, 38, 240);
-const QColor buttonPressed(20, 20, 22, 250);
+// Pillole della barra: vetro un po' più chiaro; quella del nome di più
+const QColor pill(255, 255, 255, 22);
+const QColor namePillFill(255, 255, 255, 36);
+const QColor menuHover(255, 255, 255, 44);
+
+// Pulsanti: cerchi scuri come i pannelli del contenuto, simbolo bianco
+const QColor buttonNormal(37, 34, 44, 235);
+const QColor buttonHover(64, 60, 74, 245);
+const QColor buttonPressed(84, 79, 96, 250);
 const QColor closeHover(229, 72, 77, 245);
 const QColor closePressed(190, 45, 50, 250);
 
@@ -99,6 +106,51 @@ Decoration::Decoration(QObject *parent, const QVariantList &args)
 {
 }
 
+bool Decoration::isSystemApp() const
+{
+    // windowClass() = "<nome> <classe>", es. "dolphin org.kde.dolphin"
+    static const QStringList apps = {QStringLiteral("org.kde.dolphin"), QStringLiteral("systemsettings"),
+                                     QStringLiteral("org.kde.kinfocenter"), QStringLiteral("org.kde.discover"),
+                                     QStringLiteral("org.kde.plasma-systemmonitor"), QStringLiteral("org.kde.ark"),
+                                     QStringLiteral("org.kde.spectacle"), QStringLiteral("org.kde.gwenview"),
+                                     QStringLiteral("org.kde.okular"), QStringLiteral("org.kde.kate"),
+                                     QStringLiteral("org.kde.konsole"), QStringLiteral("org.kde.kcalc"),
+                                     QStringLiteral("org.arcbase.installer")};
+    const QStringList parts = window()->windowClass().toLower().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    for (const QString &part : parts) {
+        // Le app ArcScript (app_id org.arcos.<nome>) e quelle di arcbase
+        if (apps.contains(part) || part.startsWith(QLatin1String("org.arcos.")) || part.startsWith(QLatin1String("org.arcbase."))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+namespace
+{
+QFont captionFont(const QFont &base)
+{
+    QFont font = base;
+    font.setPixelSize(13);
+    font.setWeight(QFont::Medium);
+    return font;
+}
+}
+
+QRectF Decoration::namePill() const
+{
+    const QFontMetricsF metrics(captionFont(settings()->font()));
+    const qreal limit = std::max<qreal>(0, buttonsPill().left() - 2 * Metrics::margin - Metrics::pillSpacing);
+    const qreal width = std::min(limit, metrics.horizontalAdvance(window()->caption()) + 2 * Metrics::pillPadding);
+    return QRectF(Metrics::margin, Metrics::margin, std::max<qreal>(width, 0), Metrics::pillHeight);
+}
+
+QRectF Decoration::buttonsPill() const
+{
+    const qreal width = m_buttons ? m_buttons->geometry().width() + 2 * Metrics::buttonsPadding : 0;
+    return QRectF(window()->width() - Metrics::margin - width, Metrics::margin, width, Metrics::pillHeight);
+}
+
 bool Decoration::isMaximized() const
 {
     return window()->isMaximized();
@@ -115,14 +167,19 @@ bool Decoration::init()
         updateShadow();
         update();
     });
-    connect(w, &KDecoration3::DecoratedWindow::captionChanged, this, [this] {
-        update(titleBar());
+    // Il nome cambia la larghezza della sua pillola, e quindi dove va il menu
+    connect(w, &KDecoration3::DecoratedWindow::captionChanged, this, &Decoration::updateLayout);
+    connect(w, &KDecoration3::DecoratedWindow::hasApplicationMenuChanged, this, &Decoration::updateLayout);
+    connect(w, &KDecoration3::DecoratedWindow::paletteChanged, this, [this] {
+        update();
     });
     // Pulsanti a destra (riduci, ingrandisci, chiudi: ButtonsOnRight in
     // kwinrc). Il gruppo li ricrea da solo se cambia l'impostazione.
     m_buttons = new KDecoration3::DecorationButtonGroup(KDecoration3::DecorationButtonGroup::Position::Right, this, &Button::create);
     m_buttons->setSpacing(Metrics::buttonSpacing);
     connect(m_buttons, &KDecoration3::DecorationButtonGroup::geometryChanged, this, &Decoration::positionButtons);
+    // Pillola del menu dell'app (quando l'app lo esporta): un clic lo apre
+    m_menu = new Button(DecorationButtonType::ApplicationMenu, this, this);
 
     setOpaque(false);
     updateLayout();
@@ -135,10 +192,20 @@ void Decoration::positionButtons()
     if (!m_buttons) {
         return;
     }
-    const QRectF group = m_buttons->geometry();
-    const QPointF pos(window()->width() - group.width() - Metrics::buttonsRight, (Metrics::titleHeight - Metrics::buttonSize) / 2);
-    if (group.topLeft() != pos) {
+    const QRectF pill = buttonsPill();
+    const QPointF pos(pill.left() + Metrics::buttonsPadding, pill.top() + Metrics::buttonsPadding);
+    if (m_buttons->geometry().topLeft() != pos) {
         m_buttons->setPos(pos);
+    }
+    if (m_menu) {
+        // Accanto al nome, se c'è spazio prima dei pulsanti
+        const QRectF name = namePill();
+        const qreal x = name.right() + Metrics::pillSpacing;
+        const QFontMetricsF metrics(captionFont(settings()->font()));
+        const qreal width = metrics.horizontalAdvance(QStringLiteral("Menu")) + 2 * Metrics::pillPadding + 22;
+        const bool fits = x + width + Metrics::pillSpacing <= pill.left();
+        m_menu->setGeometry(QRectF(x, Metrics::margin, width, Metrics::pillHeight));
+        m_menu->setVisible(isSystemApp() && window()->hasApplicationMenu() && fits && !isMaximized());
     }
 }
 
@@ -156,7 +223,8 @@ void Decoration::updateLayout()
     setTitleBar(QRectF(0, 0, width, Metrics::titleHeight));
 
     // KWin arrotonda gli angoli in basso del contenuto; quelli in alto li
-    // disegna la barra del titolo
+    // disegna la barra del titolo. Il contenuto continua il vetro della barra
+    // (Kvantum: sfondo trasparente, pannelli incassati)
     setBorderRadius(KDecoration3::BorderRadius(0, 0, radius, radius));
     if (maximized) {
         setBorderOutline(KDecoration3::BorderOutline());
@@ -165,8 +233,14 @@ void Decoration::updateLayout()
     }
 
     // Sfocatura di KWin dietro la barra del titolo
-    const QPainterPath path = titlePath(QRectF(0, 0, width, Metrics::titleHeight), radius);
-    setBlurRegion(QRegion(path.toFillPolygon().toPolygon()));
+    // Vetro (sfocatura di KWin) solo per le app di sistema: le altre hanno
+    // la barra del colore del loro sfondo, senza stacco dal contenuto
+    if (isSystemApp()) {
+        const QPainterPath path = titlePath(QRectF(0, 0, width, Metrics::titleHeight), radius);
+        setBlurRegion(QRegion(path.toFillPolygon().toPolygon()));
+    } else {
+        setBlurRegion(QRegion());
+    }
 
     positionButtons();
     update();
@@ -187,20 +261,44 @@ void Decoration::paint(QPainter *painter, const QRectF &repaintArea)
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(active ? titleActive : titleInactive);
+    const bool system = isSystemApp();
+    // App di terze parti: la barra continua lo sfondo dell'app (il colore
+    // Window della sua palette); nome e pulsanti ci stanno sopra
+    const QColor appBackground = window()->palette().color(QPalette::Window);
+    const bool lightApp = appBackground.lightnessF() > 0.6;
+    painter->setBrush(system ? (active ? titleActive : titleInactive) : appBackground);
     painter->drawPath(titlePath(bar, rounded ? Metrics::cornerRadius : 0));
 
-    // Nome dell'app a sinistra
-    QFont font = settings()->font();
-    font.setPixelSize(13);
-    font.setWeight(QFont::Medium);
-    painter->setFont(font);
-    painter->setPen(active ? textActive : textInactive);
-    const qreal buttonsWidth = m_buttons ? m_buttons->geometry().width() + Metrics::buttonsRight + 12 : 0;
-    const QRectF textRect(Metrics::titleLeft, 0, width - Metrics::titleLeft - buttonsWidth, Metrics::titleHeight);
+    // Pillola dei pulsanti a destra
+    const QRectF buttons = buttonsPill();
+    const qreal pillRadius = Metrics::pillHeight / 2;
+    painter->setBrush(!system && lightApp ? QColor(0, 0, 0, 18) : pill);
+    painter->drawRoundedRect(buttons, pillRadius, pillRadius);
+
+    // Nome dell'app: in una pillola per le app di sistema, semplice per le altre
+    painter->setFont(captionFont(settings()->font()));
+    QRectF textRect;
+    if (system) {
+        const QRectF name = namePill();
+        painter->setBrush(namePillFill);
+        painter->drawRoundedRect(name, pillRadius, pillRadius);
+        textRect = name.adjusted(Metrics::pillPadding, 0, -Metrics::pillPadding, 0);
+    } else {
+        const qreal left = Metrics::margin + Metrics::pillPadding;
+        textRect = QRectF(left, Metrics::margin, buttons.left() - left - Metrics::pillSpacing, Metrics::pillHeight);
+    }
+    if (!system && lightApp) {
+        painter->setPen(QColor(28, 26, 34, active ? 230 : 130));
+    } else {
+        painter->setPen(active ? textActive : textInactive);
+    }
     const QString caption = painter->fontMetrics().elidedText(window()->caption(), Qt::ElideRight, int(textRect.width()));
     painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, caption);
     painter->restore();
+
+    if (m_menu && m_menu->isVisible()) {
+        m_menu->paint(painter, repaintArea);
+    }
 
     if (m_buttons) {
         m_buttons->paint(painter, repaintArea);
@@ -271,6 +369,28 @@ void Button::paint(QPainter *painter, const QRectF &repaintArea)
     const bool close = type() == DecorationButtonType::Close;
     const bool active = decoration()->window()->isActive();
 
+    if (type() == DecorationButtonType::ApplicationMenu) {
+        // Pillola "≡ Menu"
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(isHovered() || isPressed() ? menuHover : pill);
+        painter->drawRoundedRect(rect, rect.height() / 2, rect.height() / 2);
+        QPen pen(active ? textActive : textInactive);
+        pen.setWidthF(1.6);
+        pen.setCapStyle(Qt::RoundCap);
+        painter->setPen(pen);
+        const qreal x = rect.left() + Metrics::pillPadding;
+        const qreal y = rect.center().y();
+        for (const qreal dy : {-4.0, 0.0, 4.0}) {
+            painter->drawLine(QPointF(x, y + dy), QPointF(x + 12, y + dy));
+        }
+        painter->setFont(captionFont(decoration()->settings()->font()));
+        painter->drawText(rect.adjusted(Metrics::pillPadding + 22, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("Menu"));
+        painter->restore();
+        return;
+    }
+
     QColor fill = buttonNormal;
     if (isPressed()) {
         fill = close ? closePressed : buttonPressed;
@@ -287,7 +407,7 @@ void Button::paint(QPainter *painter, const QRectF &repaintArea)
     painter->setBrush(fill);
     painter->drawEllipse(rect);
 
-    // Simbolo bianco su una griglia di 20×20 centrata nel pulsante
+    // Simbolo bianco centrato nel pulsante
     QPen pen(QColor(255, 255, 255, active || isHovered() ? 245 : 200));
     pen.setWidthF(1.6);
     pen.setCapStyle(Qt::RoundCap);

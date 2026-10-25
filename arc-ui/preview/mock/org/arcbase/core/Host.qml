@@ -60,6 +60,11 @@ Item {
                     width: blurItem.modelData.width
                     height: blurItem.modelData.height
                     radius: blurItem.modelData.radius
+                    readonly property var corners: blurItem.modelData.corners || null
+                    topLeftRadius: corners ? corners[0] : radius
+                    topRightRadius: corners ? corners[1] : radius
+                    bottomRightRadius: corners ? corners[2] : radius
+                    bottomLeftRadius: corners ? corners[3] : radius
                 }
             }
             MultiEffect {

@@ -77,7 +77,7 @@ KWin.TabBoxSwitcher {
                 elide: Text.ElideMiddle
                 text: list.currentItem ? list.currentItem.model.caption : ""
                 color: Qt.rgba(1, 1, 1, 0.95)
-                font.family: "Inter"
+                font.family: "Google Sans Flex"
                 font.pixelSize: 14
                 font.weight: Font.Medium
             }

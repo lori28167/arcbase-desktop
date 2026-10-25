@@ -23,6 +23,9 @@ GlassPanel {
     signal optionChanged(string key, var value)
 
     radius: Theme.widgetRadius
+    // [alto-sx, alto-dx, basso-dx, basso-sx]: piccoli verso i widget vicini
+    property var corners: [radius, radius, radius, radius]
+    topLeftRadius: corners[0]; topRightRadius: corners[1]; bottomRightRadius: corners[2]; bottomLeftRadius: corners[3]
     z: dragging ? 10 : 0
     scale: dragging ? 1.04 : 1
     Behavior on scale { NumberAnimation { duration: Theme.fast } }

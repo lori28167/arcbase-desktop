@@ -286,7 +286,7 @@ Window {
 
         Rectangle {
             anchors.fill: parent
-            radius: 12
+            radius: Theme.inner(Theme.topbarRadius, (Theme.topbarHeight - 36) / 2)
             color: win.attached ? Theme.inkHover : (button.active ? Theme.surface3 : Theme.surface2)
             opacity: button.containsMouse || button.active ? 1 : 0
             Behavior on opacity { NumberAnimation { duration: Theme.fast } }

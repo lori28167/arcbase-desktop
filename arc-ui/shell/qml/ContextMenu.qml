@@ -69,7 +69,7 @@ GlassPanel {
                     }
                     Rectangle {
                         anchors.fill: parent
-                        radius: Theme.rSm
+                        radius: Theme.inner(Theme.rLg, 6)
                         color: area.containsMouse ? (entry.modelData.danger ? Qt.rgba(239 / 255, 68 / 255, 68 / 255, 0.22) : Theme.surface3) : "transparent"
                     }
                     ArcIcon {

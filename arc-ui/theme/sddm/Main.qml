@@ -13,7 +13,7 @@ Rectangle {
     readonly property color text: Qt.rgba(1, 1, 1, 0.95)
     readonly property color muted: Qt.rgba(1, 1, 1, 0.58)
     readonly property color sub: Qt.rgba(1, 1, 1, 0.35)
-    readonly property string font: config.font || "Inter"
+    readonly property string font: config.font || "Google Sans Flex"
 
     property var users: []
     property int userIndex: 0

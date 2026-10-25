@@ -38,10 +38,11 @@ kservice
 kio
 kwindowsystem
 
-# Aspetto arc: stile Qt, icone (WhiteSur si scarica in 11-desktop.sh), font, cursori
+# Aspetto arc: stile Qt, icone (Ticly Sequoia è in arc-ui/icons), font, cursori
 kvantum
 papirus-icon-theme
-inter-font
+breeze-icons
+gtk-update-icon-cache
 adwaita-cursors
 
 # Login

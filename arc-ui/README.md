@@ -15,12 +15,14 @@ elemento grafico di Plasma**:
   barra del titolo di vetro sfocato, nome dell'app a sinistra, pulsanti tondi
   scuri a destra (riduci, ingrandisci, chiudi), angoli arrotondati (quelli in
   basso li taglia KWin), bordo di vetro e ombra;
-- le icone delle app del sistema sono le **arc icons** (`icons/generate.py`),
-  disegnate in stile macOS ma originali: file, store, installer, foto,
-  documenti, archivi, impostazioni, terminale, cestino, cattura, informazioni,
-  calcolatrice, editor, monitor di sistema, Launchpad. Le altre app prendono
-  **WhiteSur** (GPL-3.0, scaricato a versione fissa con checksum in
-  `11-desktop.sh`), poi Papirus.
+  le app di sistema (Dolphin, Impostazioni, Discover, Kate, Konsole...) hanno
+  la barra staccata e tutta arrotondata sopra un corpo di vetro, con il
+  contenuto (le viste) incassato in un pannello arrotondato (Kvantum);
+- il tema icone è **Ticly Sequoia** (`icons/ticly-sequoia/`), installato
+  intatto; le icone che non ha arrivano da Breeze o dall'app stessa (hicolor).
+  La shell mostra le icone così come sono (`AppIcon.qml`);
+- il font di sistema è **Google Sans Flex** (`fonts/`, OFL 1.1, da
+  github.com/google/fonts).
 
 Tutti i pannelli usano lo stesso materiale: vetro scuro sfocato da KWin
 (`Theme.material`, `GlassPanel.qml`).
@@ -32,8 +34,8 @@ Tutti i pannelli usano lo stesso materiale: vetro scuro sfocato da KWin
 | Launchpad | la topbar si trasforma nella barra di ricerca; app a pagine come nei vecchi macOS; cartelle 2×2 come widget (app avviabili dal riquadro), create trascinando un'app su un'altra; riordino col trascinamento; nome della cartella modificabile |
 | Ricerca | stile Spotlight con KRunner: app, file (Baloo), impostazioni, calcoli, conversioni, finestre, documenti recenti, comandi |
 | Centro di controllo | Wi‑Fi (con elenco reti), Bluetooth, Non disturbare, luce notturna, modalità aereo, cattura; luminosità e volume; musica; batteria; sessione |
-| Centro notifiche | storico, Non disturbare, Cancella tutto |
-| Notifiche | server `org.freedesktop.Notifications`, azioni, pausa col mouse |
+| Centro notifiche | in alto al centro sotto l'orario: storico, Non disturbare, Cancella tutto |
+| Notifiche | server `org.freedesktop.Notifications`, in alto al centro sotto l'orario, a pila (si apre col mouse), azioni, pausa col mouse |
 | OSD | volume, luminosità, Wi‑Fi… dai tasti (servizio `org.kde.osdService`) |
 | Scrivania | widget Orologio, Calendario, Meteo, Musica, Sistema, Note in S/M/L; modifica, spostamento, aggiunta; menu col tasto destro; scelta dello sfondo |
 | Stato di sistema | a eventi, senza controlli continui: UPower (batteria), NetworkManager (rete), BlueZ (Bluetooth), PipeWire `pactl subscribe` (volume) |
@@ -81,7 +83,9 @@ shell/                 arc-shell (C++ + QML, compilata da 11-desktop.sh con CMak
                        Launchpad, ControlCenter, NotificationCenter, Osd,
                        DesktopWindow + *Widget.qml, WallpaperPicker
 decoration/            decorazione delle finestre per KWin (C++, KDecoration3)
-icons/generate.py      arc icons (stile macOS, sopra WhiteSur per le altre app)
+fonts/                 Google Sans Flex (font variabile) e licenza OFL
+icons/ticly-sequoia/   tema icone predefinito (archivio + SHA256SUMS), installato
+                       intatto in /usr/share/icons/ticly-sequoia; eredita da Breeze
 session/               startarc, sessione Wayland, unità systemd, file .desktop
 theme/
   generate.py          genera Kvantum ArcGlass e decorazioni Aurorae dai token
@@ -99,10 +103,10 @@ preview/               anteprima interattiva senza KDE (run.sh, mock, runner)
 
 - **Token grafici**: `shell/qml/Theme.qml` (shell) e le costanti in cima a
   `theme/generate.py` (app e finestre), entrambi presi da `ArcBase/ui/arc-ui.css`.
-- **Icone**: ogni arc icon è una funzione in `icons/generate.py`: squircle
-  continuo con ombra, oggetti con gradienti, luci e ombre (feGaussianBlur, Qt
-  6.7+); un'icona vale per più nomi (quelli dei file .desktop). La versione di WhiteSur è in
-  `config/arcbase.conf` (`ARC_ICON_THEME_URL`, `ARC_ICON_THEME_SHA256`).
+- **Icone**: per cambiare tema sostituire l'archivio in `icons/ticly-sequoia/`
+  e aggiornare `SHA256SUMS`; le misure dello squircle (corpo all'80%, raggio
+  0,2237) sono `Theme.iconBody` e `Theme.iconCorner`, usate anche per gli
+  angoli concentrici della dock.
 - **Finestre**: misure e colori in `decoration/arcdecoration.h` (`Metrics`) e in
   cima a `arcdecoration.cpp`; l'anteprima li copia in `preview/SampleWindow.qml`.
 - **Sfondo e app nella dock**: `/etc/xdg/arcbase/arc-shell.conf`, o per un solo

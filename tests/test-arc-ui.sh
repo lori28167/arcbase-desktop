@@ -27,7 +27,7 @@ check "display manager sddm"                 grep -qx '# display-manager: sddm' 
 check "base KDE: kwin e plasma-workspace"    bash -c 'grep -qx kwin "$0" && grep -qx plasma-workspace "$0"' "$LIST"
 check "runtime di arc-shell"                 bash -c 'for p in layer-shell-qt qt6-declarative kservice kio kwindowsystem; do grep -qx "$p" "$0" || exit 1; done' "$LIST"
 check "nessun pacchetto grafico di Plasma"   bash -c '! grep -qxE "plasma-desktop|breeze|breeze-gtk|kde-gtk-config|plasma-workspace-wallpapers" "$0"' "$LIST"
-check "temi: kvantum, papirus, kdecoration"  bash -c 'for p in kvantum papirus-icon-theme inter-font kdecoration; do grep -qx "$p" "$0" || exit 1; done' "$LIST"
+check "temi: kvantum, papirus, kdecoration"  bash -c 'for p in kvantum papirus-icon-theme kdecoration; do grep -qx "$p" "$0" || exit 1; done' "$LIST"
 check "niente Aurorae (decorazione propria)" bash -c '! grep -qx aurorae "$0"' "$LIST"
 
 echo "temi generati (theme/generate.py)"
@@ -74,25 +74,26 @@ check "kwinrc: decorazione arc"              has "$UI/config/kwinrc" 'library=or
 check "kwinrc: pulsanti a destra IAX"        grep -qx 'ButtonsOnRight=IAX' "$UI/config/kwinrc"
 check "11-desktop compila la decorazione"    has "$REPO/scripts/chroot/11-desktop.sh" 'arc-ui/decoration'
 
-echo "arc icons (icons/generate.py)"
-IC=$T/icons
-if py "$UI/icons/generate.py" --out "$IC"; then ok "generatore eseguito"; else ko "generatore eseguito"; fi
-APPS=$IC/icons/arc-icons/scalable/apps
-check "index.theme sopra WhiteSur"          grep -qx 'Inherits=WhiteSur-dark,WhiteSur,Papirus-Dark,hicolor' "$IC/icons/arc-icons/index.theme"
-check "WhiteSur fissato con checksum"        bash -c 'grep -q "ARC_ICON_THEME_URL=https://github.com/vinceliuice/WhiteSur-icon-theme/archive/refs/tags/" "$0" && grep -qE "ARC_ICON_THEME_SHA256=[0-9a-f]{64}" "$0"' "$REPO/config/arcbase.conf"
-check "11-desktop verifica il checksum"      has "$REPO/scripts/chroot/11-desktop.sh" 'sha256sum -c'
-check "icone con sfocature (ombre morbide)"  bash -c 'grep -q feGaussianBlur "$0/arc-files.svg"' "$APPS"
-check "SVG delle icone ben formati"          py -c 'import sys, glob, xml.dom.minidom as m; [m.parse(f) for f in glob.glob(sys.argv[1] + "/*.svg")]' "$APPS"
-# I nomi usati dai .desktop di KDE e Mozilla e dalla shell
-# Le app del sistema hanno icone proprie (le altre vengono da WhiteSur)
-for name in system-file-manager plasmadiscover system-software-install gwenview okular ark preferences-system \
-            utilities-terminal user-trash spectacle hwinfo accessories-calculator accessories-text-editor \
-            utilities-system-monitor arc-launchpad application-x-executable; do
-    check "icona: $name" test -f "$APPS/$name.svg"
-done
-check "Firefox e Kate tengono il loro logo"  bash -c '! test -e "$0/firefox.svg" && ! test -e "$0/kate.svg"' "$APPS"
-check "shell e dock usano le arc icons"      bash -c 'grep -q "image://icon/arc-launchpad" "$0/DockWindow.qml" && grep -q "user-trash" "$0/DockWindow.qml"' "$UI/shell/qml"
-check "kdeglobals: tema icone arc-icons"     grep -qx 'Theme=arc-icons' "$UI/config/kdeglobals"
+echo "Ticly Sequoia (tema icone predefinito)"
+TS=$UI/icons/ticly-sequoia
+check "checksum dell'archivio"               bash -c 'cd "$0" && { sha256sum -c SHA256SUMS 2>/dev/null || shasum -a 256 -c SHA256SUMS; } >/dev/null' "$TS"
+check "kdeglobals: Theme=ticly-sequoia"     grep -qx 'Theme=ticly-sequoia' "$UI/config/kdeglobals"
+check "look-and-feel: Theme=ticly-sequoia"  grep -qx 'Theme=ticly-sequoia' "$UI/theme/lookandfeel/contents/defaults"
+check "GTK: ticly-sequoia"                  grep -qx 'gtk-icon-theme-name=ticly-sequoia' "$UI/config/gtk-settings.ini"
+check "shell: prima Ticly, poi le icone originali" grep -q 'ticly-sequoia' "$UI/shell/src/shell.cpp"
+check "icone delle app così come sono"      bash -c 'for f in DockItem Launchpad NotificationCard; do grep -q "AppIcon {" "$0/$f.qml" || exit 1; done' "$UI/shell/qml"
+check "dock: angoli concentrici, margini uguali" bash -c 'grep -q "dockHeight: dockIcon + 2 \* dockPadding$" "$0" && grep -q "iconCorner) + dockPadding" "$0"' "$UI/shell/qml/Theme.qml"
+check "notifiche in alto al centro, a pila"  bash -c 'grep -q "Shell.AnchorTop," "$0/NotificationsWindow.qml" && ! grep -q "AnchorRight" "$0/NotificationsWindow.qml" && grep -q "win.mode === \"notifications\" ? Math.round" "$0/OverlayWindow.qml"' "$UI/shell/qml"
+check "niente più arc icons e WhiteSur"      bash -c '! test -e "$0/arc-ui/icons/generate.py" && ! grep -rq "WhiteSur\|arc-icons" "$0/arc-ui/install.sh" "$0/config" "$0/scripts" "$0/arc-ui/shell"' "$REPO"
+check "font Google Sans Flex (OFL) incluso"  bash -c 'test -s "$0/GoogleSansFlex.ttf" && grep -q "Open Font License" "$0/OFL.txt"' "$UI/fonts"
+check "font in shell, KDE, GTK e SDDM"       bash -c 'grep -q "\"Google Sans Flex\"" "$0/shell/qml/Theme.qml" && grep -qx "font=Google Sans Flex,10" "$0/config/kdeglobals" && grep -q "Google Sans Flex" "$0/config/gtk-settings.ini" && grep -qx "font=Google Sans Flex" "$0/theme/sddm/theme.conf"' "$UI"
+check "Sfondo in Impostazioni (Aspetto)"     bash -c 'grep -q "\"appearance\"" "$0/kcm/kcm_arcwallpaper.json" && grep -q "kcmutils_add_qml_kcm" "$0/kcm/CMakeLists.txt" && grep -q "arc-ui/kcm" "$1"' "$UI" "$REPO/scripts/chroot/11-desktop.sh"
+check "Sfondo non più nel menu del desktop"  bash -c '! grep -q "Cambia sfondo" "$0/DesktopWindow.qml" && ! test -e "$0/WallpaperPicker.qml"' "$UI/shell/qml"
+check "modulo sfondo di Plasma nascosto"     grep -qx 'kcm_wallpaper=false' "$UI/config/kdeglobals"
+check "finestre: barra a pillole (nome, menu, pulsanti)"  bash -c 'grep -q "namePill" "$0/decoration/arcdecoration.cpp" && grep -q "ApplicationMenu" "$0/decoration/arcdecoration.cpp" && grep -q "org.arcos." "$0/decoration/arcdecoration.cpp"' "$UI"
+check "velo dei pannelli sotto topbar e dock"  bash -c 'grep -q "LayerTop" "$0/shell/qml/VeilWindow.qml" && grep -q "VeilWindow" "$0/shell/qml/Main.qml"' "$UI"
+check "Kvantum: contenuto incassato"         bash -c 'grep -q "\"content\", 20" "$0" && grep -q "frame__element=\"content\"" "$0"' "$UI/theme/generate.py"
+check "Breeze per le icone ereditate"       grep -qx breeze-icons "$LIST"
 
 echo "installazione in una cartella di prova (install.sh)"
 R=$T/root
@@ -105,8 +106,7 @@ for f in usr/bin/startarc usr/share/wayland-sessions/arc.desktop usr/lib/systemd
          usr/share/kwin/tabbox/arc/contents/ui/main.qml usr/share/color-schemes/ArcUI.colors \
          usr/share/arcbase/arc-ui/wallpaper/dolomiti.jpg usr/share/kglobalaccel/org.arcbase.launcher.desktop \
          etc/xdg/kwinrc etc/xdg/arcbase/arc-shell.conf etc/sddm.conf.d/10-arcbase-arc.conf \
-         etc/skel/.config/Kvantum/kvantum.kvconfig home/arc/.config/Kvantum/kvantum.kvconfig \
-         usr/share/icons/arc-icons/index.theme usr/share/icons/arc-icons/scalable/apps/system-file-manager.svg; do
+         etc/skel/.config/Kvantum/kvantum.kvconfig home/arc/.config/Kvantum/kvantum.kvconfig; do
     check "installato: $f" test -f "$R/$f"
 done
 check "startarc eseguibile"                  test -x "$R/usr/bin/startarc"
@@ -120,6 +120,11 @@ check "kwinrc: Meta apre il launcher"        has "$R/etc/xdg/kwinrc" 'Meta=org.a
 check "kwinrc: selettore finestre arc"       has "$R/etc/xdg/kwinrc" 'LayoutName=arc'
 check "sddm: tema arc"                       has "$R/etc/sddm.conf.d/10-arcbase-arc.conf" 'Current=arc'
 check "krunner (Plasma) disattivato"         has "$R/etc/skel/.config/kglobalshortcutsrc" '_launch=none'
+check "ticly-sequoia installato con index.theme" test -f "$R/usr/share/icons/ticly-sequoia/index.theme"
+check "ticly-sequoia: cartelle di Directories=" bash -c 'cd "$0" && for d in $(sed -n "s/^Directories=//p" index.theme | tr , " "); do test -d "$d" || exit 1; done' "$R/usr/share/icons/ticly-sequoia"
+check "ticly-sequoia: icone come nell archivio" bash -c 'x=$(mktemp -d) && tar -xzf "$0" -C "$x" && rm "$x/ticly-sequoia/install.sh" && diff -r "$x/ticly-sequoia" "$1" -x icon-theme.cache -x arc-launchpad.svg >/dev/null; r=$?; rm -rf "$x"; exit $r' "$UI/icons/ticly-sequoia/ticly-sequoia.tar.gz" "$R/usr/share/icons/ticly-sequoia"
+check "icona del Launchpad nel tema"       test -f "$R/usr/share/icons/ticly-sequoia/scalable/apps/arc-launchpad.svg"
+check "/etc/xdg/kdeglobals: Theme=ticly-sequoia" grep -qx 'Theme=ticly-sequoia' "$R/etc/xdg/kdeglobals"
 check "reinstallazione idempotente"          bash "$UI/install.sh" "$R"
 
 echo "sessione"
@@ -207,7 +212,7 @@ check "tutto schermo: topbar attaccata"      has "$UI/shell/qml/TopBarWindow.qml
 check "tutto schermo: dock nascosta"         has "$UI/shell/qml/DockWindow.qml" 'ActiveWindow.maximized'
 check "margini delle superfici dinamici"     has "$UI/shell/src/shell.cpp" 'void Shell::updateLayer'
 check "finestra attiva da libtaskmanager"    has "$UI/shell/qml/ActiveWindowTasks.qml" 'tasks.activeTask'
-check "nessun QtQuick.Controls (stile Plasma)" bash -c '! grep -rq "import QtQuick.Controls" "$0"' "$UI"
+check "shell senza QtQuick.Controls (stile Plasma)" bash -c '! grep -rq "import QtQuick.Controls" "$0/shell" "$0/theme"' "$UI"
 check "nessun import di Plasma nella shell"  bash -c '! grep -rqE "import org\.kde\.(plasma|ksvg)" "$0"' "$UI"
 
 echo

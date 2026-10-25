@@ -16,7 +16,8 @@
 
 namespace
 {
-// image://icon/<nome> → icona del tema (Papirus) alla dimensione richiesta
+// image://icon/<nome> → icona del tema di sistema (Ticly Sequoia, poi Breeze e
+// le icone originali delle app in hicolor) alla dimensione richiesta
 class IconProvider : public QQuickImageProvider
 {
 public:

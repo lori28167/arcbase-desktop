@@ -16,7 +16,7 @@ class Shell : public QObject
     Q_CLASSINFO("D-Bus Interface", "org.arcbase.Shell")
 
     // Pannello a tutto schermo aperto:
-    // "" | "launcher" | "control" | "notifications" | "wallpaper"
+    // "" | "launcher" | "control" | "notifications"
     Q_PROPERTY(QString overlay READ overlay WRITE setOverlay NOTIFY overlayChanged)
 
     Q_PROPERTY(bool batteryPresent READ batteryPresent NOTIFY batteryChanged)
@@ -48,6 +48,11 @@ class Shell : public QObject
     Q_PROPERTY(bool nightLight READ nightLight WRITE setNightLight NOTIFY nightLightChanged)
     // Widget della scrivania (JSON: [{id, kind, size, col, row, options}])
     Q_PROPERTY(QString widgetLayout READ widgetLayout WRITE setWidgetLayout NOTIFY widgetLayoutChanged)
+    // Tessere del centro di controllo, nell'ordine scelto ("Modifica")
+    Q_PROPERTY(QStringList controlTiles READ controlTiles WRITE setControlTiles NOTIFY controlTilesChanged)
+    // Foto dell'utente (AccountsService o ~/.face), "" se non c'è
+    Q_PROPERTY(QString avatar READ avatar CONSTANT)
+    Q_PROPERTY(QString hostName READ hostName CONSTANT)
 
 public:
     // Stessi valori di LayerShellQt::Window
@@ -83,6 +88,10 @@ public:
     void setWallpaper(const QString &url);
     QStringList dockLaunchers() const;
     QString widgetLayout() const;
+    QStringList controlTiles() const;
+    void setControlTiles(const QStringList &tiles);
+    QString avatar() const;
+    QString hostName() const;
     void setWidgetLayout(const QString &layout);
     QString launchpadLayout() const;
     void setLaunchpadLayout(const QString &layout);
@@ -103,6 +112,9 @@ public:
     Q_INVOKABLE void setInputRegion(QWindow *window, const QVariantList &rects);
 
     Q_INVOKABLE QString iconForApp(const QString &appId) const;
+    // true se l'icona è di Ticly Sequoia (già squircle); le altre (originali
+    // delle app) la shell le appoggia su uno squircle di vetro
+    Q_INVOKABLE bool hasOwnShape(const QString &iconName) const;
     Q_INVOKABLE void run(const QString &program, const QStringList &arguments = {});
     Q_INVOKABLE void openSettings(const QString &module = QString());
     Q_INVOKABLE void openTrash();
@@ -127,6 +139,10 @@ public Q_SLOTS:
     Q_SCRIPTABLE void showControlCenter();
     Q_SCRIPTABLE void showNotifications();
     Q_SCRIPTABLE void hideOverlay();
+    // Per il modulo "Sfondo" di Impostazioni di sistema (arc-ui/kcm)
+    Q_SCRIPTABLE QStringList wallpaperFiles() const;
+    Q_SCRIPTABLE QString currentWallpaper() const;
+    Q_SCRIPTABLE void applyWallpaper(const QString &path);
 
 Q_SIGNALS:
     void overlayChanged();
@@ -138,6 +154,7 @@ Q_SIGNALS:
     void brightnessChanged();
     void wallpaperChanged();
     void widgetLayoutChanged();
+    void controlTilesChanged();
     void launchpadLayoutChanged();
     void nightLightChanged();
 

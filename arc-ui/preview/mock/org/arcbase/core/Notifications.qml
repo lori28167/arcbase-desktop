@@ -52,6 +52,13 @@ ListModel {
     }
 
     Component.onCompleted: {
+        const old = (id, app, icon, summary, body, minutes) => history.add({ notificationId: id, appName: app, icon: "image://icon/" + icon,
+            summary: summary, body: body, urgency: 1, time: new Date(Date.now() - minutes * 60000) });
+        old(901, "Telegram", "telegram", "Luca", "Hai visto il nuovo trailer?", 95);
+        old(902, "Telegram", "telegram", "Giulia", "Ci vediamo alle 18 in piazza?", 70);
+        old(903, "Telegram", "telegram", "Gruppo Arc", "3 nuovi messaggi", 40);
+        old(904, "Calendario", "office-calendar", "Revisione del progetto Arc", "Oggi alle 18:00 · Sala riunioni", 30);
+        old(905, "Firefox", "firefox", "Download completato", "arcbase-desktop.iso (2,1 GB)", 20);
         history.add({ notificationId: 900, appName: "Konsole", icon: "image://icon/utilities-terminal",
                       summary: "Comando completato", body: "arc upgrade: 42 pacchetti aggiornati.", urgency: 1,
                       time: new Date(Date.now() - 3600 * 1000) });

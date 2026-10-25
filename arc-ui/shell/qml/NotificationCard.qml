@@ -28,16 +28,13 @@ Item {
         onClicked: card.clicked()
     }
 
-    Image {
+    AppIcon {
         id: appIcon
-        x: 14
-        y: 14
-        width: 36
-        height: 36
-        sourceSize.width: 72
-        sourceSize.height: 72
-        source: card.icon
-        fillMode: Image.PreserveAspectFit
+        x: 10
+        y: 10
+        width: 44
+        height: 44
+        url: card.icon
     }
 
     Column {

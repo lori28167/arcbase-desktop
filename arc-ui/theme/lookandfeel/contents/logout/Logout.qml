@@ -99,7 +99,7 @@ Rectangle {
             anchors.bottom: parent.bottom
             text: choice.label
             color: Qt.rgba(1, 1, 1, 0.75)
-            font.family: "Inter"
+            font.family: "Google Sans Flex"
             font.pixelSize: 13
         }
     }

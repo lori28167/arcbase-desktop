@@ -18,6 +18,8 @@ QtObject {
     }
 
     property DesktopWindow desktop: DesktopWindow {}
+    // Prima di topbar e dock: nel livello Top resta sotto di loro
+    property VeilWindow veil: VeilWindow {}
     property TopBarWindow topBar: TopBarWindow {}
     property DockWindow dock: DockWindow {}
     property NotificationsWindow notifications: NotificationsWindow {}

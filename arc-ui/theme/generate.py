@@ -17,6 +17,7 @@ import os
 WHITE = (255, 255, 255)
 INK = (15, 13, 20)            # --arc-bg / testo su accento bianco
 WINDOW = (18, 15, 24)         # vetro delle finestre
+CONTENT = (37, 34, 44)        # contenuto incassato (viste, liste) sopra il vetro
 MENU = (16, 13, 22)
 TOOLTIP = (15, 13, 25)
 TEXT = "#f2f0f7"              # --arc-text
@@ -148,6 +149,10 @@ def kvantum_svg():
         "disabled": (rgba((0, 0, 0), 0.12), white(0.05)),
     })
     element(svg, "common", 8, {"normal": (CLEAR, white(0.10))})
+    # Contenuto delle finestre di sistema: pannello incassato arrotondato
+    # sopra il corpo di vetro (la barra laterale resta vetro)
+    # Concentrico con la finestra: 28 (decorazione) - 8 di margine
+    element(svg, "content", 20, {"normal": (rgba(CONTENT, 0.96), white(0.08))})
     element(svg, "menu", 12, {"normal": (rgba(MENU, 0.92), white(0.12))})
     element(svg, "tooltip", 8, {"normal": (rgba(TOOLTIP, 0.94), white(0.12))})
     for name in ("menuitem", "menubaritem"):
@@ -196,8 +201,9 @@ def kvantum_svg():
     interior(svg, "header-toggled", white(0.06))
     interior(svg, "header-disabled", white(0.02))
     # Sfondo delle finestre (traslucido, KWin lo sfoca)
-    interior(svg, "window-normal", rgba(WINDOW, 0.84))
-    interior(svg, "window-normal-inactive", rgba(WINDOW, 0.92))
+    # Corpo delle finestre: vetro chiaro di trasparenza, KWin lo sfoca
+    interior(svg, "window-normal", rgba(WINDOW, 0.62))
+    interior(svg, "window-normal-inactive", rgba(WINDOW, 0.75))
 
     # Maniglia dei cursori
     for state, color in (("normal", white(1)), ("focused", white(1)), ("pressed", rgba((232, 230, 238), 1)),
@@ -279,7 +285,7 @@ def kvantum_config():
     )
     colors = section(
         "GeneralColors",
-        window__color="#16131d", base__color="#1b1824", alt__base__color="#201c2a",
+        window__color="#16131d", base__color="#25222c", alt__base__color="#2a2632",
         button__color="#2a2534", light__color="#3a3446", mid__light__color="#302b3b",
         dark__color="#0d0b12", mid__color="#1f1b28", highlight__color="#4a4458",
         inactive__highlight__color="#3a3546", text__color=TEXT, window__text__color=TEXT,
@@ -289,7 +295,7 @@ def kvantum_config():
     )
     hacks = section(
         "Hacks",
-        transparent_dolphin_view="true", blur_konsole="true", transparent_ktitle_label="true",
+        transparent_dolphin_view="false", blur_konsole="true", transparent_ktitle_label="true",
         transparent_menutitle="true", respect_darkness="true", blur_translucent="true",
         no_selection_tint="true", normal_default_pushbutton="true", single_top_toolbar="true",
         transparent_arrow_button="true", disabled_icon_opacity="70", kinetic_scrolling="false",
@@ -309,8 +315,8 @@ def kvantum_config():
         section("IndicatorSpinBox", inherits="PanelButtonCommand", frame="false", interior="false"),
         section("CheckBox", **OFF, indicator__element="checkbox", indicator__size="18", **TEXT_COLORS),
         section("RadioButton", **OFF, indicator__element="radio", indicator__size="18", **TEXT_COLORS),
-        section("GenericFrame", frame="true", frame__element="common", frame__top="8", frame__bottom="8",
-                frame__left="8", frame__right="8", interior="false"),
+        section("GenericFrame", frame="true", frame__element="content", frame__top="8", frame__bottom="8",
+                frame__left="8", frame__right="8", interior="true", interior__element="content"),
         section("Focus", frame="false"),
         section("Menu", **framed("menu", 12), **TEXT_COLORS),
         section("MenuItem", **framed("menuitem", 6), indicator__element="arrow", indicator__size="12",

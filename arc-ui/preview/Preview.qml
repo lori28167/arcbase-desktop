@@ -3,6 +3,7 @@
 // pannello per simulare notifiche, batteria, rete e audio.
 // Ctrl+Spazio = tasto Meta (launcher). Con ARC_PREVIEW_SHOTS salva le schermate.
 import QtQuick
+import QtQuick.Controls
 import org.arcbase.core
 import org.kde.taskmanager
 
@@ -11,8 +12,9 @@ Window {
 
     x: previewGeometry.width > 0 ? previewGeometry.x : 40
     y: previewGeometry.width > 0 ? previewGeometry.y : 40
-    width: previewGeometry.width > 0 ? previewGeometry.width : 1440
-    height: previewGeometry.width > 0 ? previewGeometry.height : 900
+    // Trailer: 16:9 (registrato e scalato a 1920×1080)
+    width: trailerMode ? 1440 : previewGeometry.width > 0 ? previewGeometry.width : 1440
+    height: trailerMode ? 810 : previewGeometry.width > 0 ? previewGeometry.height : 900
     visible: true
     color: "black"
     title: "arc UI — anteprima (i file QML si ricaricano da soli · tasto destro sulla scrivania per il menu)"
@@ -31,6 +33,14 @@ Window {
     property var shellObject
 
     // Finestra di esempio con la decorazione arc (sopra la scrivania, sotto topbar e dock)
+    // App di terze parti (barra attaccata) dietro a quella di sistema
+    SampleWindow {
+        parent: screen
+        z: 149
+        system: false
+        visible: WindowState.visible && !WindowState.maximized
+        normalGeometry: Qt.rect(960, 250, 440, 380)
+    }
     SampleWindow {
         id: sample
         parent: screen
@@ -49,6 +59,8 @@ Window {
             WindowState.visible = animShots !== "launcher";
             WindowState.maximized = false;
             animStart.start();
+        } else if (trailerMode) {
+            trailerStart.start();
         } else if (shots) {
             applyShot(shotList[0][1]);
             step.start();
@@ -57,16 +69,61 @@ Window {
         }
     }
 
+    // --- Trailer (ARC_PREVIEW_TRAILER=1) ------------------------------------------
+    Loader {
+        id: trailerLoader
+        parent: screen
+        anchors.fill: parent
+        z: 1000
+        active: trailerMode
+        sourceComponent: Trailer {
+            shell: root.shellObject
+            onFinished: {
+                preview.stopRecording();
+                Qt.quit();
+            }
+        }
+    }
+    Timer {
+        id: trailerStart
+        interval: 2500
+        onTriggered: {
+            preview.startRecording();
+            trailerLoader.item.start();
+        }
+    }
+
     // --- Schermate automatiche (ARC_PREVIEW_SHOTS=1) ---------------------------
     property int stage: 0
     readonly property var shotList: [["fullscreen", "fullscreen"], ["window", "window"], ["desktop", ""], ["launcher", "launcher"], ["launcher-folder", "launcher-folder"], ["launcher-search", "launcher-search"], ["control", "control"],
-                                     ["notifications", "notifications"], ["widgets", "edit"], ["wallpaper", "wallpaper"]]
+                                     ["notifications", "notifications"], ["toasts", "toasts"], ["widgets", "edit"], ["settings-wallpaper", "settings-wallpaper"]]
+    // Tante notifiche di fila (per provare la pila)
+    Timer {
+        id: burst
+        property int n: 0
+        interval: 140
+        repeat: true
+        onRunningChanged: if (running) n = 0
+        onTriggered: {
+            const list = [["Firefox", "firefox", "Download completato", "arcbase-desktop.iso (2,1 GB)"],
+                          ["Telegram", "telegram", "Giulia", "Ci vediamo alle 18 in piazza?"],
+                          ["Discover", "plasmadiscover", "Aggiornamenti disponibili", "12 pacchetti possono essere aggiornati."],
+                          ["Dolphin", "org.kde.dolphin", "Copia completata", "3 file copiati in <b>Documenti</b>."],
+                          ["Spectacle", "org.kde.spectacle", "Schermata salvata", "Immagini/Schermata 16-30.png"],
+                          ["Calendario", "office-calendar", "Riunione tra 10 minuti", "Revisione del progetto Arc"]];
+            const e = list[n % list.length];
+            Notifications.push(e[0], e[1], e[2], e[3], 1);
+            if (++n >= 6) stop();
+        }
+    }
     function applyShot(mode) {
+        if (mode === "toasts") burst.restart();
+        kcmWindow.visible = mode === "settings-wallpaper";
         WindowState.visible = mode === "window" || mode === "fullscreen";
         WindowState.maximized = mode === "fullscreen";
         root.shellObject.desktop.editing = mode === "edit";
         const launcherShot = mode.indexOf("launcher-") === 0;
-        Shell.overlay = mode === "edit" || mode === "window" || mode === "fullscreen" ? "" : launcherShot ? "launcher" : mode;
+        Shell.overlay = mode === "edit" || mode === "window" || mode === "fullscreen" || mode === "toasts" ? "" : launcherShot ? "launcher" : mode;
         if (launcherShot) {
             launchpadAction.mode = mode;
             launchpadAction.restart();
@@ -74,12 +131,11 @@ Window {
     }
     Timer {
         id: step
-        interval: 1800
+        interval: kcmWindow.visible ? 5000 : 1800
         onTriggered: {
             const name = root.shotList[root.stage][0];
-            screen.grabToImage(result => {
-                result.saveToFile(outDir + "/" + name + ".png");
-                console.log("salvato", outDir + "/" + name + ".png");
+            const target = name === "settings-wallpaper" ? kcmWindow.contentItem : screen;
+            const next = () => {
                 root.stage++;
                 if (root.stage >= root.shotList.length) {
                     Qt.quit();
@@ -87,7 +143,14 @@ Window {
                 }
                 root.applyShot(root.shotList[root.stage][1]);
                 step.start();
+            };
+            // Se la finestra non è visibile la schermata si salta
+            const ok = target.grabToImage(result => {
+                result.saveToFile(outDir + "/" + name + ".png");
+                console.log("salvato", outDir + "/" + name + ".png");
+                next();
             });
+            if (!ok) next();
         }
     }
 
@@ -153,6 +216,7 @@ Window {
 
             Label { text: "Notifiche" }
             Button { text: "Notifica normale"; onClicked: Notifications.push("Dolphin", "org.kde.dolphin", "Copia completata", "3 file copiati in <b>Documenti</b>.", 1) }
+            Button { text: "Raffica di 6 notifiche"; onClicked: burst.restart() }
             Button { text: "Notifica critica"; onClicked: Notifications.push("Sistema", "systemsettings", "Batteria quasi scarica", "Collega l'alimentatore: resta il 5%.", 2) }
 
             Button { text: Notifications.doNotDisturb ? "Non disturbare: attivo" : "Non disturbare: spento"; onClicked: Notifications.doNotDisturb = !Notifications.doNotDisturb }
@@ -193,14 +257,14 @@ Window {
             Button { text: "Centro di controllo"; onClicked: Shell.overlay === "control" ? Shell.hideOverlay() : Shell.showControlCenter() }
             Button { text: "Centro notifiche"; onClicked: Shell.overlay === "notifications" ? Shell.hideOverlay() : Shell.showNotifications() }
             Button { text: root.shellObject && root.shellObject.desktop.editing ? "Fine modifica widget" : "Modifica widget"; onClicked: root.shellObject.desktop.editing = !root.shellObject.desktop.editing }
-            Button { text: "Cambia sfondo"; onClicked: Shell.overlay = "wallpaper" }
+            Button { text: "Impostazioni › Sfondo"; onClicked: kcmWindow.visible = true }
             Button { text: "Ricarica QML"; onClicked: preview.reload() }
         }
 
         component Label: Text {
             topPadding: 8
             color: Qt.rgba(1, 1, 1, 0.55)
-            font.family: "Inter"
+            font.family: "Google Sans Flex"
             font.pixelSize: 11
             font.weight: Font.DemiBold
             font.capitalization: Font.AllUppercase
@@ -222,9 +286,31 @@ Window {
                 anchors.centerIn: parent
                 text: button.text
                 color: "white"
-                font.family: "Inter"
+                font.family: "Google Sans Flex"
                 font.pixelSize: 12
             }
+        }
+    }
+
+    // Impostazioni di sistema → Sfondo (arc-ui/kcm/ui/main.qml) con un "kcm" finto
+    QtObject {
+        id: kcm
+        readonly property bool shellRunning: true
+        readonly property var wallpapers: Shell.wallpapers().map(w => w.url.replace("file://", ""))
+        readonly property string current: Shell.wallpaper.replace("file://", "")
+        function choose(path) { Shell.wallpaper = "file://" + path; }
+        function addImage(url) { console.log("aggiungi", url); }
+    }
+    Window {
+        id: kcmWindow
+        title: "Impostazioni di sistema — Sfondo"
+        width: 760
+        height: 560
+        color: palette.window
+        Loader {
+            anchors.fill: parent
+            active: kcmWindow.visible
+            source: Qt.resolvedUrl("../kcm/ui/main.qml")
         }
     }
 }

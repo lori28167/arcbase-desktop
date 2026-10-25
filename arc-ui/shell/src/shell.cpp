@@ -7,12 +7,14 @@
 #include <QDBusConnection>
 #include <QDBusMessage>
 #include <QDBusPendingCall>
+#include <QHash>
 #include <QDBusVariant>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QSysInfo>
 #include <QMargins>
 #include <QPainterPath>
 #include <QProcess>
@@ -68,7 +70,24 @@ QRegion roundedRegion(const QVariantList &rects)
         }
         const qreal radius = rect.value(QStringLiteral("radius")).toReal();
         QPainterPath path;
-        path.addRoundedRect(bounds, radius, radius);
+        // corners: [alto-sx, alto-dx, basso-dx, basso-sx] per gli elementi di
+        // un gruppo (Theme.groupCorners); altrimenti lo stesso raggio ovunque
+        const QVariantList corners = rect.value(QStringLiteral("corners")).toList();
+        if (corners.size() == 4) {
+            const qreal tl = corners[0].toReal(), tr = corners[1].toReal(), br = corners[2].toReal(), bl = corners[3].toReal();
+            path.moveTo(bounds.left() + tl, bounds.top());
+            path.lineTo(bounds.right() - tr, bounds.top());
+            path.arcTo(QRectF(bounds.right() - 2 * tr, bounds.top(), 2 * tr, 2 * tr), 90, -90);
+            path.lineTo(bounds.right(), bounds.bottom() - br);
+            path.arcTo(QRectF(bounds.right() - 2 * br, bounds.bottom() - 2 * br, 2 * br, 2 * br), 0, -90);
+            path.lineTo(bounds.left() + bl, bounds.bottom());
+            path.arcTo(QRectF(bounds.left(), bounds.bottom() - 2 * bl, 2 * bl, 2 * bl), 270, -90);
+            path.lineTo(bounds.left(), bounds.top() + tl);
+            path.arcTo(QRectF(bounds.left(), bounds.top(), 2 * tl, 2 * tl), 180, -90);
+            path.closeSubpath();
+        } else {
+            path.addRoundedRect(bounds, radius, radius);
+        }
         region += QRegion(path.toFillPolygon().toPolygon());
     }
     return region;
@@ -326,6 +345,60 @@ QVariantList Shell::wallpapers() const
     return list;
 }
 
+QStringList Shell::wallpaperFiles() const
+{
+    QStringList files;
+    const QVariantList list = wallpapers();
+    for (const QVariant &entry : list) {
+        files << QUrl(entry.toMap().value(QStringLiteral("url")).toString()).toLocalFile();
+    }
+    return files;
+}
+
+QString Shell::currentWallpaper() const
+{
+    return QUrl(wallpaper()).toLocalFile();
+}
+
+void Shell::applyWallpaper(const QString &path)
+{
+    if (QFile::exists(path)) {
+        setWallpaper(QUrl::fromLocalFile(path).toString());
+    }
+}
+
+QStringList Shell::controlTiles() const
+{
+    static const QStringList defaults = {QStringLiteral("wifi"), QStringLiteral("bluetooth"), QStringLiteral("dnd"),
+                                         QStringLiteral("nightlight")};
+    return m_settings.value(QStringLiteral("ControlCenter/tiles"), defaults).toStringList();
+}
+
+void Shell::setControlTiles(const QStringList &tiles)
+{
+    if (tiles == controlTiles()) {
+        return;
+    }
+    m_settings.setValue(QStringLiteral("ControlCenter/tiles"), tiles);
+    Q_EMIT controlTilesChanged();
+}
+
+QString Shell::avatar() const
+{
+    for (const QString &path : {QStringLiteral("/var/lib/AccountsService/icons/") + userName(),
+                                QDir::homePath() + QStringLiteral("/.face.icon"), QDir::homePath() + QStringLiteral("/.face")}) {
+        if (QFileInfo(path).isFile()) {
+            return QUrl::fromLocalFile(path).toString();
+        }
+    }
+    return {};
+}
+
+QString Shell::hostName() const
+{
+    return QSysInfo::machineHostName();
+}
+
 QString Shell::widgetLayout() const
 {
     return m_settings.value(QStringLiteral("Widgets/layout")).toString();
@@ -410,6 +483,39 @@ void Shell::setInputRegion(QWindow *window, const QVariantList &rects)
         return;
     }
     window->setMask(rects.isEmpty() ? QRegion() : roundedRegion(rects));
+}
+
+bool Shell::hasOwnShape(const QString &iconName) const
+{
+    static const QString root = QStringLiteral("/usr/share/icons/ticly-sequoia");
+    static QHash<QString, bool> cache;
+    if (iconName.isEmpty()) {
+        return false;
+    }
+    const auto it = cache.constFind(iconName);
+    if (it != cache.constEnd()) {
+        return *it;
+    }
+    bool found = false;
+    const QStringList sizes = QDir(root).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QString &size : sizes) {
+        if (size == QLatin1String("symbolic")) {
+            continue;
+        }
+        const QStringList contexts = QDir(root + QLatin1Char('/') + size).entryList(QDir::Dirs | QDir::NoDotAndDotDot);
+        for (const QString &context : contexts) {
+            const QString base = root + QLatin1Char('/') + size + QLatin1Char('/') + context + QLatin1Char('/') + iconName;
+            if (QFile::exists(base + QStringLiteral(".svg")) || QFile::exists(base + QStringLiteral(".png"))) {
+                found = true;
+                break;
+            }
+        }
+        if (found) {
+            break;
+        }
+    }
+    cache.insert(iconName, found);
+    return found;
 }
 
 QString Shell::iconForApp(const QString &appId) const

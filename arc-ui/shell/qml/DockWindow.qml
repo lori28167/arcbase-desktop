@@ -22,15 +22,26 @@ Window {
     property bool revealed: false
     readonly property bool hidden: autoHide && !revealed && !menu.visible
     readonly property real bottomInset: autoHide ? Theme.gap : 0
-    property real slide: hidden ? Theme.dockHeight + Theme.gap + 12 : 0
-    Behavior on slide { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
+    // Entrata e uscita: la dock sale dal bordo con un leggero rimbalzo e scende
+    // accelerando; anche all'avvio della sessione entra dal basso
+    readonly property real offscreen: Theme.dockHeight + Theme.gap + 12
+    property bool entered: false
+    property real slide: !entered || hidden ? offscreen : 0
+    Behavior on slide {
+        NumberAnimation {
+            duration: win.slide < win.offscreen / 2 ? Theme.normal : Theme.slow
+            easing.type: win.hidden || !win.entered ? Easing.InCubic : Easing.OutBack
+            easing.overshoot: 1.1
+        }
+    }
+    Timer { interval: 250; running: win.ready && !win.entered; onTriggered: win.entered = true }
     property bool ready: false
     onAutoHideChanged: {
         revealed = false;
         updateLayer();
     }
     onHiddenChanged: Qt.callLater(updateRegions)
-    onSlideChanged: if (slide === 0) Qt.callLater(updateRegions)
+    onSlideChanged: updateRegions()
     function updateLayer() {
         if (!ready) return;
         // Nascosta: niente margine, il bordo dello schermo fa da "maniglia"
@@ -96,12 +107,13 @@ Window {
     }
 
     function updateRegions() {
-        if (hidden) {
+        if (slide >= offscreen - 0.5) {
             Shell.setBlur(win, []);
             Shell.setInputRegion(win, [{ x: 0, y: win.height - 4, width: win.width, height: 4, radius: 0 }]);
             return;
         }
-        const rect = { x: dock.x, y: dock.y, width: dock.width, height: dock.height, radius: dock.radius };
+        // La sfocatura segue la dock mentre entra o esce
+        const rect = { x: dock.x, y: dock.y + slide, width: dock.width, height: dock.height, radius: dock.radius };
         Shell.setBlur(win, [rect]);
         // Sopra la dock: le icone ingrandite e, se aperto, il menu
         const lift = base * (Theme.dockZoom - 1) + 10;
@@ -132,6 +144,7 @@ Window {
         id: zone
         anchors.fill: parent
         transform: Translate { y: win.slide }
+        opacity: 1 - 0.4 * win.slide / win.offscreen
         HoverHandler { id: tracker }
 
         // --- La dock (si allarga con l'onda)
@@ -151,7 +164,7 @@ Window {
             id: row
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: Theme.dockPadding + 6 + win.bottomInset
+            anchors.bottomMargin: Theme.dockPadding + win.bottomInset
             spacing: Theme.dockSpacing
             onPositioningComplete: win.updateCenters()
             onWidthChanged: win.updateCenters()
@@ -165,7 +178,7 @@ Window {
                     required property int index
 
                     readonly property bool isLauncher: model.IsLauncher === true
-                    iconSource: "image://icon/" + Shell.iconForApp(model.AppId || "")
+                    iconName: Shell.iconForApp(model.AppId || "")
                     label: model.AppName || model.display || ""
                     running: !isLauncher && model.IsStartup !== true
                     active: model.IsActive === true
@@ -209,7 +222,7 @@ Window {
 
             DockItem {
                 id: launchpad
-                iconSource: "image://icon/arc-launchpad"
+                iconName: "arc-launchpad"
                 label: "Launchpad"
                 active: Shell.overlay === "launcher"
                 zoom: win.zoomAt(x + width / 2)
@@ -218,7 +231,7 @@ Window {
             }
             DockItem {
                 id: trash
-                iconSource: "image://icon/user-trash"
+                iconName: "user-trash"
                 label: "Cestino"
                 zoom: win.zoomAt(x + width / 2)
                 shift: win.shiftFor(x + width / 2)

@@ -36,7 +36,7 @@ Item {
             id: art
             width: widget.size === "s" ? parent.width : widget.size === "m" ? parent.height : parent.width
             height: widget.size === "l" ? parent.height - 112 : width
-            radius: 16
+            radius: Theme.inner(Theme.widgetRadius, 16)
             color: Theme.surface3
             clip: true
             Image {

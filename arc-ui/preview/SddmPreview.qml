@@ -24,7 +24,7 @@ Window {
     QtObject {
         id: config
         property string background: wallpaperPath
-        property string font: "Inter"
+        property string font: "Google Sans Flex"
     }
     ListModel {
         id: userModel

@@ -394,13 +394,12 @@ Item {
                             border.width: 1
                             border.color: Theme.materialBorder
                         }
-                        Image {
+                        AppIcon {
                             id: resultIcon
-                            x: 14
+                            x: 10
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 32; height: 32
-                            sourceSize.width: 64; sourceSize.height: 64
-                            source: "image://icon/" + result.modelData.icon
+                            width: 40; height: 40
+                            name: result.modelData.icon
                         }
                         Column {
                             anchors { left: resultIcon.right; leftMargin: 12; right: category.left; rightMargin: 12; verticalCenter: parent.verticalCenter }
@@ -648,18 +647,14 @@ Item {
                 color: Theme.surface4
                 visible: tile.hinted
             }
-            Image {
+            AppIcon {
                 id: icon
+                readonly property string source: "image://icon/" + name
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: (parent.height - height - label.height - 10) / 2
                 width: 88
                 height: 88
-                source: "image://icon/" + (tile.app.iconName || "application-x-executable")
-                sourceSize.width: 176
-                sourceSize.height: 176
-                asynchronous: true
-                smooth: true
-                mipmap: true
+                name: tile.app.iconName || "application-x-executable"
                 opacity: tile.dragging ? 0.25 : tile.pressed ? 0.8 : 1
                 scale: tile.hinted ? 1.08 : tile.containsMouse && !tile.dragging ? 1.04 : 1
                 Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.OutCubic } }
@@ -759,13 +754,10 @@ Item {
                             height: mini.size
                             hoverEnabled: true
                             onClicked: more ? pad.folderId = ftile.appId : Applications.launch(modelData)
-                            Image {
+                            AppIcon {
                                 anchors.fill: parent
                                 visible: !miniApp.more
-                                source: "image://icon/" + (Applications.byId(miniApp.modelData).iconName || "application-x-executable")
-                                sourceSize.width: 96
-                                sourceSize.height: 96
-                                mipmap: true
+                                name: Applications.byId(miniApp.modelData).iconName || "application-x-executable"
                                 scale: miniApp.pressed ? 0.9 : miniApp.containsMouse ? 1.08 : 1
                                 Behavior on scale { NumberAnimation { duration: Theme.fast } }
                             }

@@ -1,0 +1,13 @@
+{
+    "KPlugin": {
+        "Description": "Choose the desktop wallpaper",
+        "Description[it]": "Scegli lo sfondo della scrivania",
+        "Icon": "preferences-desktop-wallpaper",
+        "Name": "Wallpaper",
+        "Name[it]": "Sfondo"
+    },
+    "X-KDE-Keywords": "wallpaper,background,desktop,picture,image",
+    "X-KDE-Keywords[it]": "sfondo,scrivania,immagine,foto,wallpaper",
+    "X-KDE-System-Settings-Parent-Category": "appearance",
+    "X-KDE-Weight": 10
+}

@@ -101,27 +101,19 @@ arc_ui() {
     cmake --build "$build"
     cmake --install "$build"
     rm -rf "$build"
+    # Modulo "Sfondo" di Impostazioni di sistema
+    cmake -S "$ARCBASE_DIR/arc-ui/kcm" -B "$build" \
+        -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release
+    cmake --build "$build"
+    cmake --install "$build"
+    rm -rf "$build"
     # Decorazione delle finestre (KDecoration3)
     cmake -S "$ARCBASE_DIR/arc-ui/decoration" -B "$build" \
         -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release
     cmake --build "$build"
     cmake --install "$build"
     rm -rf "$build"
-    arc_icon_theme
     "$ARCBASE_DIR/arc-ui/install.sh" --user "$ARC_USER" /
-}
-
-# Icone WhiteSur (versione fissata, checksum verificato): base delle arc icons
-arc_icon_theme() {
-    local work=/tmp/arc-icon-theme
-    rm -rf "$work"
-    mkdir -p "$work"
-    curl -fsSL --retry 3 -o "$work/theme.tar.gz" "$ARC_ICON_THEME_URL"
-    echo "$ARC_ICON_THEME_SHA256  $work/theme.tar.gz" | sha256sum -c - >/dev/null \
-        || die "checksum del tema di icone errato: $ARC_ICON_THEME_URL"
-    tar -C "$work" -xzf "$work/theme.tar.gz"
-    (cd "$work"/*/ && ./install.sh -d /usr/share/icons -t default)
-    rm -rf "$work"
 }
 
 configure_desktop() {
