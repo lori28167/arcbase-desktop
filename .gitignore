@@ -7,3 +7,6 @@ out/
 # Segreti (token): mai nel repository
 .env
 *.env
+# Anteprima di arc UI (arc-ui/preview/run.sh)
+arc-ui/preview/.build/
+arc-ui/preview/.out/

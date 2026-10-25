@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Launcher di arc
+Comment=Apre la griglia delle app di arc UI
+Exec=dbus-send --session --type=method_call --dest=org.arcbase.Shell /Shell org.arcbase.Shell.toggleLauncher
+Icon=arcbase-logo
+NoDisplay=true
+OnlyShowIn=KDE;
+# Scorciatoie globali (kglobalaccel): Meta da solo è in kwinrc
+X-KDE-Shortcuts=Alt+F1,Meta+Space

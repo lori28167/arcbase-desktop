@@ -1,0 +1,8 @@
+# arc-preview — anteprima di arc-shell senza KDE (vedi arc-ui/preview/run.sh)
+cmake_minimum_required(VERSION 3.22)
+project(arc-preview LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_AUTOMOC ON)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Gui Qml Quick Svg)
+add_executable(arc-preview main.cpp)
+target_link_libraries(arc-preview PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Svg)

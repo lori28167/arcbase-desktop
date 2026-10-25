@@ -1,0 +1,17 @@
+#!/bin/bash
+# =============================================================================
+#  startarc — avvia la sessione arc (arc UI su KWin Wayland)
+#
+#  La sessione è quella di KDE (KWin, ksmserver, kded, portali, polkit,
+#  blocco schermo), ma ARC_SESSION=1 fa saltare plasmashell e partire
+#  arc-shell al suo posto:
+#    /usr/lib/systemd/user/plasma-plasmashell.service.d/arc.conf
+#    /usr/lib/systemd/user/arc-shell.service
+#  startplasma-wayland copia l'ambiente nel gestore utente di systemd, quindi
+#  le due unità vedono ARC_SESSION.
+# =============================================================================
+export ARC_SESSION=1
+export XDG_SESSION_DESKTOP=arc
+export XCURSOR_THEME=Adwaita
+
+exec /usr/bin/startplasma-wayland "$@"

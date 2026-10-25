@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=arc shell
+Comment=Shell grafica di arc UI
+Exec=/usr/bin/arc-shell
+Icon=arcbase-logo
+NoDisplay=true
+OnlyShowIn=KDE;
+# Interfacce Wayland riservate che KWin concede solo a questo eseguibile
+# (finestre aperte per la dock, stato dei tasti, feedback di avvio)
+X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_kwin_keystate,org_kde_plasma_activation_feedback

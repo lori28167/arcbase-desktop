@@ -1,0 +1,6 @@
+[Greeter]
+Theme=org.arcbase.arcui
+WallpaperPlugin=org.kde.image
+
+[Greeter][Wallpaper][org.kde.image][General]
+Image=file:///usr/share/arcbase/arc-ui/wallpaper/dolomiti.jpg

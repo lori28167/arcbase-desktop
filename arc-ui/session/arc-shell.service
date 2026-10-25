@@ -1,0 +1,17 @@
+[Unit]
+Description=arc UI — shell grafica (topbar, dock, widget, launcher, notifiche)
+PartOf=graphical-session.target
+After=plasma-kwin_wayland.service plasma-core.target
+
+[Service]
+# Solo nella sessione arc (startarc); nella sessione Plasma non parte
+ExecCondition=/bin/sh -c 'test "$ARC_SESSION" = 1'
+ExecStart=/usr/bin/arc-shell
+Type=dbus
+BusName=org.arcbase.Shell
+Restart=on-failure
+RestartSec=1
+Slice=session.slice
+
+[Install]
+WantedBy=plasma-workspace.target

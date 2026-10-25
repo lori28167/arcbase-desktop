@@ -1,0 +1,21 @@
+[General]
+ColorScheme=ArcUI
+font=Google Sans Flex,10
+menuFont=Google Sans Flex,10
+toolBarFont=Google Sans Flex,10
+smallestReadableFont=Google Sans Flex,8
+fixed=Noto Sans Mono,10
+
+[Icons]
+Theme=ticly-sequoia
+
+[KDE]
+LookAndFeelPackage=org.arcbase.arcui
+widgetStyle=kvantum
+SingleClick=false
+AnimationDurationFactor=0.7
+
+# Il modulo sfondo di Plasma parla con plasmashell, che in arc non c'è:
+# al suo posto c'è "Sfondo" di arc (arc-ui/kcm)
+[KDE Control Module Restrictions]
+kcm_wallpaper=false

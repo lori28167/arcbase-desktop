@@ -264,7 +264,7 @@ sovrascrivono in `config/local.conf` o come variabili d'ambiente. Le principali:
 | Variabile | Default | Descrizione |
 |---|---|---|
 | `LFS` | `/mnt/lfs` | punto di montaggio della destinazione |
-| `ARC_DESKTOP` | `kde` | `kde`, `gnome`, `xfce` o `none` ([liste](config/desktop)) |
+| `ARC_DESKTOP` | `kde` | `kde`, `arc` ([arc UI](arc-ui/README.md) su base KDE), `gnome`, `xfce` o `none` ([liste](config/desktop)) |
 | `ARC_LOCALE` / `ARC_KEYMAP` / `ARC_TIMEZONE` | `it_IT.UTF-8` / `it` / `Europe/Rome` | lingua, tastiera, fuso |
 | `ARC_USER`, `ARC_USER_PASSWORD`, `ARC_ROOT_PASSWORD` | `arc`, `arcbase`, `arcbase` | utente desktop |
 | `ARC_ARCH_REPOS` | `core extra` | repository Arch abilitati |
@@ -319,7 +319,7 @@ config/
   packages.conf              sorgenti e versioni (LFS 12.3 + BLFS + pacman/apt)
   arch-provides.map          nomi Arch forniti dal base LFS
   kernel/arcbase.config      frammento di configurazione del kernel
-  desktop/*.list             pacchetti di KDE, GNOME, Xfce
+  desktop/*.list             pacchetti di KDE, arc, GNOME, Xfce
 scripts/
   lib/common.sh              motore di build (ricette, stamp, log, dry-run)
   00…05, 12                  stadi eseguiti sull'host
@@ -330,6 +330,9 @@ rootfs/                      file installati nel sistema
   usr/bin/arcbase-*          mkbase, runtime-sync, abi-check, bootloader
   usr/share/libalpm/hooks/   hook ALPM (systemd, controllo ABI)
   etc/pam.d, etc/profile…    configurazione di sistema
+arc-ui/                      desktop arc UI su base KDE (ARC_DESKTOP=arc, vedi arc-ui/README.md)
+  shell/                     arc-shell: topbar, dock, widget, launcher, notifiche (Qt/QML)
+  theme/                     Kvantum, decorazioni, SDDM, blocco schermo, Alt+Tab
 tests/                       test senza root né rete
 ```
 
@@ -337,12 +340,15 @@ tests/                       test senza root né rete
 
 ```bash
 make lint    # shellcheck su tutti gli script
-make test    # 3 suite:
+make test    # suite:
              #  - test-recipes: ogni stadio ha tutte le ricette e i sorgenti (dry run)
              #  - test-build-engine: estrazione, errexit, stamp, log
              #  - test-arc: arc con pacman/bubblewrap/apt simulati (installazione
              #    mista, esportazione app, shim apt/dpkg, deb init, arcbase-mkbase,
              #    runtime-sync, abi-check)
+             #  - test-kernel-mirror: strumenti del mirror dei kernel
+             #  - test-arc-ui: temi generati, install.sh in una cartella di prova,
+             #    sessione arc, controlli statici di QML e C++
 ```
 
 La CI su GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) esegue

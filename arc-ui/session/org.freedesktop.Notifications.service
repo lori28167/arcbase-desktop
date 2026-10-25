@@ -1,0 +1,7 @@
+# arc UI: le notifiche inviate prima che la shell sia pronta attivano
+# arc-shell (tramite systemd), non plasmashell. Sta in /usr/local/share,
+# che il bus di sessione legge prima di /usr/share.
+[D-BUS Service]
+Name=org.freedesktop.Notifications
+Exec=/usr/bin/arc-shell
+SystemdService=arc-shell.service

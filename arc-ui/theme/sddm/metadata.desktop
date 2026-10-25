@@ -1,0 +1,13 @@
+[SddmGreeterTheme]
+Name=arc
+Description=arc UI — schermata di accesso
+Author=ArcBase
+License=AGPL-3.0
+Type=sddm-theme
+Version=1.0
+Website=https://arcbase.org/ui
+MainScript=Main.qml
+ConfigFile=theme.conf
+Theme-Id=arc
+Theme-API=2.0
+QtVersion=6
