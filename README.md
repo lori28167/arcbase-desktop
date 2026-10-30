@@ -179,16 +179,16 @@ una shell nel chroot, `sudo make umount` smonta i file system virtuali.
 # QEMU con UEFI e accelerazione 3D
 qemu-system-x86_64 -enable-kvm -m 4G -smp 4 -cpu host \
     -bios /usr/share/ovmf/OVMF.fd -device virtio-vga-gl -display gtk,gl=on \
-    -drive file=out/arcbase-desktop-1.1-x86_64.img,format=raw,if=virtio
+    -drive file=out/arcbase-desktop-1.2-x86_64.img,format=raw,if=virtio
 
 # chiavetta USB (cancella /dev/sdX!)
-sudo dd if=out/arcbase-desktop-1.1-x86_64.img of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=out/arcbase-desktop-1.2-x86_64.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ### ISO live
 
 `sudo make iso` (dopo gli stadi fino a `desktop`) crea
-`out/arcbase-desktop-1.1-x86_64.iso`, avviabile da CD/DVD o, scritta con `dd`, da
+`out/arcbase-desktop-1.2-x86_64.iso`, avviabile da CD/DVD o, scritta con `dd`, da
 chiavetta USB, sia in BIOS sia in UEFI. Il sistema è compresso in uno squashfs
 (`/arcbase/rootfs.sfs`) e all'avvio diventa un overlay con le modifiche in RAM. È
 l'unico caso in cui Arcbase usa un initramfs: uno minimale (bash, mount, blkid,
@@ -201,7 +201,7 @@ sudo make iso
 make iso-test          # QEMU senza display: GRUB → kernel → systemd → login,
                        # con BIOS e (se c'è OVMF) UEFI; salva out/iso-test-*.ppm
 qemu-system-x86_64 -enable-kvm -m 4G -smp 4 -cpu host \
-    -cdrom out/arcbase-desktop-1.1-x86_64.iso
+    -cdrom out/arcbase-desktop-1.2-x86_64.iso
 ```
 
 La voce di GRUB "shell di debug nell'initramfs" ferma l'avvio con la root live già

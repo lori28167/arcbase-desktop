@@ -77,8 +77,12 @@ build_gpgme() {
 
 build_libarchive() { autotools; }
 
+# --enable-versioned-symbols: le librerie Arch (libproxy, ...) si collegano a
+# curl_easy_*@CURL_OPENSSL_4; senza i simboli versionati il link fallisce.
+# Non si adotta il curl di Arch: richiede OPENSSL_3.5.0, l'OpenSSL di LFS è 3.4.
 build_curl() {
     autotools --with-openssl                \
+              --enable-versioned-symbols    \
               --without-libpsl              \
               --enable-threaded-resolver    \
               --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt
