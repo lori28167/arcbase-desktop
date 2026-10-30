@@ -10,3 +10,6 @@ out/
 # Anteprima di arc UI (arc-ui/preview/run.sh)
 arc-ui/preview/.build/
 arc-ui/preview/.out/
+# Python compilato (tests/, calamares/python/)
+__pycache__/
+*.pyc

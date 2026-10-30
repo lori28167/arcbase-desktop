@@ -1,0 +1,40 @@
+/* Arcbase Desktop — stile di Calamares.
+ *
+ * Il contenuto resta chiaro (palette di Fusion): i widget disegnati a mano
+ * (tabella delle partizioni, mappa dei fusi) usano la palette, quindi un tema
+ * scuro a metà li renderebbe illeggibili. Il viola del logo (#8c52ff) è solo
+ * l'accento: pulsante "Avanti", barra di avanzamento, selezioni.
+ * I nomi (#view-button-next...) sono gli object name del codice di Calamares. */
+
+QPushButton {
+    padding: 6px 18px;
+    border-radius: 8px;
+    border: 1px solid #cdc5e6;
+    background: #ffffff;
+}
+QPushButton:hover    { background: #f2edff; }
+QPushButton:disabled { color: #9a96a8; background: #f4f2f8; }
+
+QPushButton#view-button-next {
+    background: #8c52ff;
+    border: 1px solid #7a3df0;
+    color: #ffffff;
+    font-weight: bold;
+}
+QPushButton#view-button-next:hover    { background: #9d6aff; }
+QPushButton#view-button-next:disabled { background: #cbb8f5; border-color: #cbb8f5; color: #ffffff; }
+
+QProgressBar#exec-progress {
+    border: 0;
+    border-radius: 6px;
+    background: #e4def4;
+    min-height: 12px;
+    max-height: 12px;
+    text-align: center;
+}
+QProgressBar#exec-progress::chunk {
+    border-radius: 6px;
+    background: #8c52ff;
+}
+
+QLineEdit:focus, QComboBox:focus { border: 1px solid #8c52ff; }

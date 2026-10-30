@@ -1,0 +1,74 @@
+#!/bin/bash
+# =============================================================================
+#  installer-root — lanciato da root da arcbase-install-gui (via pkexec):
+#  avvia Calamares con un ambiente pulito
+#
+#  Accetta solo assegnazioni NOME=valore di poche variabili, controllate una per
+#  una (arrivano da un processo non fidato), e al più l'opzione -d. Non esegue
+#  nient'altro: l'unico programma che parte è /usr/bin/calamares.
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+die() { printf 'installer-root: %s\n' "$*" >&2; exit 1; }
+
+[[ $EUID -eq 0 ]] || die "serve root (arcbase-install-gui lo chiede a polkit)"
+[[ -d /run/arcbase-live/medium ]] || die "solo nella sessione live"
+
+# L'utente che ha lanciato l'installer (pkexec lo scrive in PKEXEC_UID)
+uid=${PKEXEC_UID:-}
+[[ $uid =~ ^[0-9]+$ ]] || die "PKEXEC_UID mancante: va lanciato con arcbase-install-gui"
+
+declare -A allow=()
+debug=()
+for a; do
+    case $a in
+        -d) debug=(-d) ;;
+        WAYLAND_DISPLAY=*)
+            # nome di un socket in $XDG_RUNTIME_DIR (wayland-0), mai un percorso
+            [[ ${a#*=} =~ ^[A-Za-z0-9._-]+$ ]] || die "WAYLAND_DISPLAY non valido"
+            allow[WAYLAND_DISPLAY]=${a#*=} ;;
+        XDG_RUNTIME_DIR=*)
+            # solo quella dell'utente che ha lanciato: /run/user/<uid>
+            [[ ${a#*=} == "/run/user/$uid" ]] || die "XDG_RUNTIME_DIR non valido"
+            allow[XDG_RUNTIME_DIR]=${a#*=} ;;
+        DISPLAY=*)
+            [[ ${a#*=} =~ ^[A-Za-z0-9.:_-]*:[0-9]+(\.[0-9]+)?$ ]] || die "DISPLAY non valido"
+            allow[DISPLAY]=${a#*=} ;;
+        XAUTHORITY=*)
+            # un file dell'utente (non uno qualsiasi che root leggerebbe per lui)
+            f=${a#*=}
+            [[ $f == /* && -f $f && $(stat -c %u "$f") == "$uid" ]] || die "XAUTHORITY non valido"
+            allow[XAUTHORITY]=$f ;;
+        XDG_SESSION_TYPE=*)
+            [[ ${a#*=} =~ ^(wayland|x11)$ ]] || die "XDG_SESSION_TYPE non valido"
+            allow[XDG_SESSION_TYPE]=${a#*=} ;;
+        XDG_CURRENT_DESKTOP=*)
+            [[ ${a#*=} =~ ^[A-Za-z0-9:_-]+$ ]] || die "XDG_CURRENT_DESKTOP non valido"
+            allow[XDG_CURRENT_DESKTOP]=${a#*=} ;;
+        LANG=*)
+            [[ ${a#*=} =~ ^[A-Za-z0-9_.@-]+$ ]] || die "LANG non valido"
+            allow[LANG]=${a#*=} ;;
+        *) die "argomento non ammesso: $a" ;;
+    esac
+done
+
+# Wayland: il socket deve esistere davvero nella cartella dell'utente
+if [[ -n ${allow[WAYLAND_DISPLAY]:-} ]]; then
+    [[ -S ${allow[XDG_RUNTIME_DIR]:-/nonexistent}/${allow[WAYLAND_DISPLAY]} ]] || die "socket Wayland non trovato"
+fi
+
+env_list=(PATH=/usr/bin:/usr/sbin HOME=/root)
+for k in "${!allow[@]}"; do env_list+=("$k=${allow[$k]}"); done
+# Fusion + il foglio di stile del branding: l'aspetto non dipende dalla
+# configurazione di KDE dell'utente (root non la legge) né da Kvantum
+env_list+=(QT_STYLE_OVERRIDE=Fusion QT_QPA_PLATFORMTHEME=)
+# Wayland se c'è, altrimenti X11
+if [[ -n ${allow[WAYLAND_DISPLAY]:-} ]]; then
+    env_list+=(QT_QPA_PLATFORM=wayland)
+elif [[ -n ${allow[DISPLAY]:-} ]]; then
+    env_list+=(QT_QPA_PLATFORM=xcb)
+else
+    die "nessuno schermo: serve una sessione grafica (WAYLAND_DISPLAY o DISPLAY)"
+fi
+
+exec env -i "${env_list[@]}" /usr/bin/calamares ${debug[@]+"${debug[@]}"}

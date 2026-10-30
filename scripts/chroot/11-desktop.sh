@@ -8,8 +8,9 @@
 #     e attiva il repository dei kernel Arcbase con $ARC_KERNEL_PACKAGE
 #  4. installa il desktop scelto (config/desktop/$ARC_DESKTOP.list)
 #  5. solo ARC_DESKTOP=arc: compila arc-shell e installa i temi di arc-ui/
-#  6. abilita display manager e NetworkManager, configura sudo
-#  7. crea il layer Debian e vi installa $ARC_DEBIAN_PACKAGES
+#  6. con ARC_CALAMARES: compila l'installer grafico Calamares
+#  7. abilita display manager e NetworkManager, configura sudo
+#  8. crea il layer Debian e vi installa $ARC_DEBIAN_PACKAGES
 # =============================================================================
 STAGE=desktop
 # shellcheck source=../lib/common.sh
@@ -116,6 +117,67 @@ arc_ui() {
     "$ARCBASE_DIR/arc-ui/install.sh" --user "$ARC_USER" /
 }
 
+# --- Installer grafico: Calamares (https://calamares.io) ------------------------
+# Non è nei repository di Arch: si compila dal sorgente di packages.conf (SHA-256
+# fissato) con le librerie Qt e KDE appena installate. Qui va solo il programma;
+# la configurazione (calamares/) la mette nella ISO live 13-iso.sh, così nel
+# sistema installato l'installer non può ripartire da solo.
+calamares_enabled() {
+    case $ARC_CALAMARES in
+        yes)  return 0 ;;
+        auto) [[ $ARC_DESKTOP == kde || $ARC_DESKTOP == arc ]] ;;
+        *)    return 1 ;;
+    esac
+}
+
+# Moduli che calamares/settings.conf usa; tutti gli altri non si compilano
+# (meno dipendenze: plasmalnf vorrebbe libplasma, interactiveterminal KParts...).
+CALAMARES_MODULES=(welcome locale keyboard partition users summary finished mount unpackfs fstab removeuser
+                   shellprocess preservefiles umount)
+CALAMARES_SKIP_MODULES=(bootloader contextualprocess displaymanager dracut dracutlukscfg dummycpp dummyprocess
+    dummypython finishedq fsresizer grubcfg hostinfo hwclock initcpio initcpiocfg initramfs initramfscfg
+    interactiveterminal keyboardq license localecfg localeq luksbootkeyfile luksopenswaphookcfg machineid
+    mkinitfs netinstall networkcfg notesqml oemid openrcdmcryptcfg packagechooser packagechooserq packages
+    plasmalnf plymouthcfg rawfs services-openrc services-systemd summaryq tracking unpackfsc
+    usersq welcomeq zfs zfshostid)
+
+# rsync copia il sistema dalla squashfs della live (modulo unpackfs); kpmcore
+# partiziona; polkit serve a pkexec (lanciatore della live)
+calamares_deps() {
+    pac -S --needed cmake extra-cmake-modules qt6-base qt6-declarative qt6-svg qt6-tools qt6-translations \
+        kcoreaddons kpmcore yaml-cpp libpwquality libglvnd polkit rsync
+}
+
+build_calamares() {
+    local m
+    # Python di LFS (3.13, condiviso): pybind11 è incluso nel sorgente, niente Boost
+    cmake -S . -B build -G Ninja                 \
+        -DCMAKE_BUILD_TYPE=Release               \
+        -DCMAKE_INSTALL_PREFIX=/usr              \
+        -DCMAKE_INSTALL_LIBDIR=lib               \
+        -DWITH_QT6=ON -DWITH_QML=ON              \
+        -DWITH_PYTHON=ON -DWITH_PYBIND11=ON      \
+        -DINSTALL_CONFIG=OFF                     \
+        -DINSTALL_POLKIT=OFF                     \
+        -DINSTALL_COMPLETION=OFF                 \
+        -DBUILD_TESTING=OFF                      \
+        -DBUILD_SCHEMA_TESTING=OFF               \
+        -DBUILD_CRASH_REPORTING=OFF              \
+        -DSKIP_MODULES="${CALAMARES_SKIP_MODULES[*]}" \
+        -Wno-dev
+    cmake --build build
+    cmake --install build
+    # Il lanciatore e il criterio polkit sono quelli di calamares/ (solo live)
+    rm -f /usr/share/applications/calamares.desktop /usr/share/metainfo/io.calamares.calamares.appdata.xml
+    # Un modulo che CMake salta in silenzio (es. partition senza kpmcore) darebbe
+    # un installer che parte e poi non sa partizionare: meglio fermarsi qui
+    [[ -x /usr/bin/calamares ]] || die "calamares non è stato installato"
+    for m in "${CALAMARES_MODULES[@]}"; do
+        [[ -e /usr/lib/calamares/modules/$m/module.desc ]] \
+            || die "modulo $m non compilato: controllare l'output di CMake (dipendenza mancante?)"
+    done
+}
+
 configure_desktop() {
     local dm=''
     if [[ -f $LIST ]]; then
@@ -168,6 +230,10 @@ step kernel-repo  kernel_repo
 step desktop-pkgs desktop_packages
 step caches       update_caches
 step arc-ui       arc_ui
+if calamares_enabled; then
+    step calamares-deps calamares_deps
+    build calamares
+fi
 step desktop-conf configure_desktop
 step debian-layer debian_layer
 step cleanup      cleanup

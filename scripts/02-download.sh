@@ -4,7 +4,8 @@
 #
 #  Per ogni voce di config/packages.conf scarica l'URL primario; in caso di
 #  errore prova il mirror completo LFS ($LFS_SOURCES_MIRROR). I file presenti
-#  nel file md5sums ufficiale del libro LFS vengono verificati.
+#  nel file md5sums ufficiale del libro LFS vengono verificati, e così quelli
+#  con uno SHA-256 in packages.conf.
 # =============================================================================
 STAGE=download
 # shellcheck source=lib/common.sh
@@ -54,6 +55,18 @@ if [[ -s $md5list ]] || fetch "$LFS_BOOK_URL/md5sums" "$md5list"; then
 else
     warn "impossibile scaricare md5sums: verifica saltata"
 fi
+
+# SHA-256 dei sorgenti che lo dichiarano in packages.conf (il quarto campo)
+bad=0
+for name in "${!PKG_SHA256[@]}"; do
+    [[ -n ${PKG_SHA256[$name]} && -f $(pkg_file "$name") ]] || continue
+    if ! verify_source "$name"; then
+        warn "SHA-256 errato: $(pkg_file "$name") (rimosso, rilanciare make download)"
+        rm -f "$(pkg_file "$name")"
+        bad=$((bad + 1))
+    fi
+done
+(( bad == 0 )) || die "alcuni sorgenti non corrispondono allo SHA-256 di packages.conf"
 
 if (( ${#failed[@]} > 0 )); then
     die "download falliti: ${failed[*]} — aggiornare gli URL in config/packages.conf"

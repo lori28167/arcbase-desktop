@@ -43,13 +43,14 @@ require_root() { [[ $EUID -eq 0 ]] || die "questo stadio va eseguito come root";
 in_chroot() { [[ ${ARCBASE_IN_CHROOT:-0} == 1 || ${ARCBASE_DRY_RUN:-0} == 1 ]]; }
 
 # --- Registro dei sorgenti (config/packages.conf) ------------------------------
-declare -gA PKG_VER=() PKG_URL=()
+declare -gA PKG_VER=() PKG_URL=() PKG_SHA256=()
 load_packages() {
-    local name ver url
-    while read -r name ver url; do
+    local name ver url sha
+    while read -r name ver url sha; do
         [[ -z ${name:-} || $name == \#* ]] && continue
         PKG_VER[$name]=$ver
         PKG_URL[$name]=${url//@V@/$ver}
+        PKG_SHA256[$name]=${sha:-}
     done < "$ARCBASE_DIR/config/packages.conf"
 }
 load_packages
@@ -68,6 +69,15 @@ pkg_file() {
     url=$(pkg_url "$1")
     url=${url%%\?*}
     printf '%s/%s\n' "$SRC_DIR" "${url##*/}"
+}
+# Se packages.conf dà lo SHA-256 del sorgente (quarto campo, facoltativo) il
+# file scaricato deve corrispondere: vale per il codice non coperto dalla lista
+# md5 ufficiale di LFS. Senza SHA-256 in packages.conf non controlla nulla.
+verify_source() {
+    local pkg=$1 want=${PKG_SHA256[$1]:-} file
+    [[ -n $want ]] || return 0
+    file=$(pkg_file "$pkg")
+    [[ $(sha256sum "$file" | cut -d' ' -f1) == "$want" ]]
 }
 # major.minor di una versione (es. 5.40.1 -> 5.40)
 ver_mm() { local v; v=$(pkg_ver "$1"); printf '%s\n' "${v%.*}"; }
@@ -106,6 +116,7 @@ build() {
     declare -F "$fn" >/dev/null || die "ricetta mancante: $fn"
     tarball=$(pkg_file "$pkg")
     [[ -f $tarball ]] || die "sorgente mancante: $tarball (eseguire 'make download')"
+    verify_source "$pkg" || die "SHA-256 errato per $tarball: eliminarlo ed eseguire 'make download'"
 
     msg "[$STAGE] $pkg $(pkg_ver "$pkg")${variant:+ ($variant)}"
     mkdir -p "$LOG_DIR"

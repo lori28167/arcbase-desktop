@@ -39,7 +39,7 @@ help:
 	@echo "Altro:"
 	@echo "  all               tutti gli stadi in sequenza"
 	@echo "  enter             shell nel chroot   |  umount  smonta il chroot"
-	@echo "  lint / test       shellcheck e test di 'arc' e arc UI (non richiedono root)"
+	@echo "  lint / test       shellcheck e test di 'arc', arc UI e Calamares (non richiedono root)"
 	@echo "  clean-stamps      forza la ricompilazione di tutto"
 
 all: check prepare download toolchain temp-tools chroot-tools base-system \
@@ -109,6 +109,7 @@ lint:
 	    tools/kernel-mirror/arcbase-kbuild tools/kernel-mirror/arcbase-kbuild-ctl \
 	    tools/kernel-mirror/install.sh \
 	    arc-ui/install.sh arc-ui/session/startarc arc-ui/preview/run.sh arc-ui/preview/trailer.sh \
+	    calamares/install.sh calamares/bin/* \
 	    tests/*.sh
 
 test:
@@ -117,6 +118,7 @@ test:
 	tests/test-arc.sh
 	tests/test-kernel-mirror.sh
 	tests/test-arc-ui.sh
+	tests/test-calamares.sh
 
 clean-stamps:
 	@source config/arcbase.conf && rm -rfv "$$LFS/sources/.arcbase-stamps"

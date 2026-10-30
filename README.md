@@ -209,8 +209,20 @@ montata in `/new_root`.
 
 ### Installare su disco
 
-Dalla sessione live si avvia l'installer con l'icona **Installa Arcbase Desktop**
-sulla scrivania (o nel menu), oppure da terminale con `sudo arcbase-install`. Chiede
+Dalla sessione live l'icona **Installa Arcbase Desktop** (la prima della dock, e sulla
+scrivania) apre l'**installer grafico**, [Calamares](https://calamares.io) con il
+branding di Arcbase: lingua, fuso orario, tastiera, disco (cancella tutto, oppure
+partizioni a mano), utente e nome del computer, riepilogo e installazione, con una
+conferma prima di toccare il disco. Parte senza password (la sessione live è la sola
+che può lanciarlo). Come funziona e come si personalizza: [`calamares/README.md`](calamares/README.md).
+
+Calamares non è nei repository di Arch: lo stadio `desktop` lo compila dal sorgente
+(`ARC_CALAMARES`, `auto` per i desktop `kde` e `arc`). Il sistema installato non ha
+initramfs, quindi **la root può essere solo ext4** (niente btrfs/xfs/LVM/LUKS per `/`).
+
+Se Calamares non è stato compilato (`ARC_CALAMARES=no`, o desktop GNOME/Xfce) resta
+l'installer da terminale `sudo arcbase-install`, che si può usare comunque (è anche
+quello provato in QEMU da `make install-test`). Chiede
 disco, nome del computer, utente, password, fuso orario e tastiera (default `us`),
 poi **cancella il disco scelto** e crea:
 
@@ -273,6 +285,7 @@ sovrascrivono in `config/local.conf` o come variabili d'ambiente. Le principali:
 | `ARC_DEBIAN_PACKAGES` | *(vuoto)* | pacchetti Debian da preinstallare |
 | `ARC_PREFER` | `arch` | chi vince in `arc install <nome>` se esiste in entrambi |
 | `ARC_RUNTIME_SYNC` | `auto` | allineamento ABI di glibc/gcc-libs ad Arch |
+| `ARC_CALAMARES` | `auto` | installer grafico Calamares nella ISO: `yes`, `no`, `auto` (sì con `kde`/`arc`) |
 | `ARC_IMAGE_SIZE` | `32G` | dimensione dell'immagine disco |
 | `ARC_JOBS` | numero di CPU | processi di compilazione paralleli |
 | `LFS_TESTS` | `0` | `1` esegue le test suite di LFS (molto più lento) |
@@ -333,6 +346,11 @@ rootfs/                      file installati nel sistema
 arc-ui/                      desktop arc UI su base KDE (ARC_DESKTOP=arc, vedi arc-ui/README.md)
   shell/                     arc-shell: topbar, dock, widget, launcher, notifiche (Qt/QML)
   theme/                     Kvantum, decorazioni, SDDM, blocco schermo, Alt+Tab
+calamares/                   installer grafico (Calamares) della ISO live, vedi calamares/README.md
+  settings.conf, modules/    sequenza e configurazione dei moduli
+  python/                    moduli scritti per Arcbase: arcbase_bootloader, arcbase_localize
+  branding/arcbase/          aspetto: logo, slideshow, foglio di stile
+  bin/, polkit/              lanciatore dalla sessione live (pkexec, senza password)
 tests/                       test senza root né rete
 ```
 
@@ -349,6 +367,8 @@ make test    # suite:
              #  - test-kernel-mirror: strumenti del mirror dei kernel
              #  - test-arc-ui: temi generati, install.sh in una cartella di prova,
              #    sessione arc, controlli statici di QML e C++
+             #  - test-calamares: configurazione dell'installer grafico, sequenza,
+             #    helper di avvio, moduli Python con libcalamares simulato
 ```
 
 La CI su GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) esegue

@@ -9,9 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Installa shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Installa shellcheck e PyYAML
+        run: sudo apt-get update && sudo apt-get install -y shellcheck python3-yaml
       - name: Lint
         run: make lint
-      - name: Test (ricette, motore di build, arc)
+      - name: Test (ricette, motore di build, arc, Calamares)
         run: make test

@@ -1,0 +1,32 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-install-gui — avvia l'installer grafico (Calamares) dalla sessione live
+#
+#  Calamares deve girare da root, ma lo schermo è dell'utente: il criterio
+#  polkit org.arcbase.installer.run lascia a chi ha la sessione attiva lanciare
+#  /usr/lib/arcbase/installer-root, che riceve da qui (come argomenti) le poche
+#  variabili d'ambiente necessarie a collegarsi al display e le verifica.
+#
+#  Solo nella ISO live (installato da calamares/install.sh). Da terminale resta
+#  `sudo arcbase-install`.
+#  Uso: arcbase-install-gui [-d]      (-d = Calamares in modalità debug)
+# =============================================================================
+set -o nounset -o pipefail
+
+die() { printf 'arcbase-install-gui: %s\n' "$*" >&2; exit 1; }
+
+[[ -d /run/arcbase-live/medium ]] || die "va avviato dalla sessione live (ISO): sul sistema installato non c'è niente da installare"
+[[ -x /usr/bin/calamares ]] || die "Calamares non è installato: usa 'sudo arcbase-install'"
+[[ ${1:-} == -d || $# -eq 0 ]] || die "uso: arcbase-install-gui [-d]"
+
+# Variabili che servono a Calamares per collegarsi allo schermo e scegliere la lingua
+env_args=()
+for v in WAYLAND_DISPLAY XDG_RUNTIME_DIR DISPLAY XAUTHORITY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP LANG; do
+    [[ -n ${!v:-} ]] && env_args+=("$v=${!v}")
+done
+
+if [[ $EUID -eq 0 ]]; then
+    exec /usr/lib/arcbase/installer-root ${env_args[@]+"${env_args[@]}"} "$@"
+fi
+command -v pkexec >/dev/null || die "pkexec non trovato (polkit): usa 'sudo arcbase-install'"
+exec pkexec /usr/lib/arcbase/installer-root ${env_args[@]+"${env_args[@]}"} "$@"

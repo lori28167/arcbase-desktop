@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Installa Arcbase Desktop
+Name[en]=Install Arcbase Desktop
+Comment=Installa il sistema su un disco
+Comment[en]=Install the system to a disk
+Exec=arcbase-install-gui
+Icon=system-software-install
+Terminal=false
+Categories=System;

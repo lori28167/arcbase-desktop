@@ -87,9 +87,19 @@ EOF
 mkdir -p "$STAGING"/{dev,proc,sys,run,tmp}
 chmod 1777 "$STAGING/tmp"
 
-# Lanciatore dell'installer (solo nella live: arcbase-install lo rimuove dal
-# sistema installato), nel menu e sulla scrivania dell'utente live
-cat > "$STAGING/usr/share/applications/arcbase-install.desktop" <<'EOF'
+# Installer, solo nella live (nel sistema installato non deve poter ripartire):
+# l'interfaccia grafica (Calamares: configurazione, branding, lanciatore) se lo
+# stadio desktop l'ha compilato, altrimenti il lanciatore di arcbase-install
+# da terminale. In entrambi i casi il lanciatore è arcbase-install.desktop (la
+# dock lo mette per primo), che arcbase-install toglie dal sistema installato.
+if [[ -x $STAGING/usr/bin/calamares && ${ARC_CALAMARES:-auto} != no ]]; then
+    info "installer grafico (Calamares)"
+    # unpackfs copia con rsync
+    [[ -x $STAGING/usr/bin/rsync ]] || die "rsync mancante in $LFS: serve a Calamares (rilanciare make desktop)"
+    "$ARCBASE_DIR/calamares/install.sh" --live-user "$ARC_USER" --timezone "$ARC_TIMEZONE" "$STAGING"
+else
+    info "installer da terminale (arcbase-install): Calamares non compilato o ARC_CALAMARES=no"
+    cat > "$STAGING/usr/share/applications/arcbase-install.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Installa Arcbase Desktop
@@ -101,6 +111,7 @@ Icon=system-software-install
 Terminal=false
 Categories=System;
 EOF
+fi
 home="$STAGING/home/$ARC_USER"
 if [[ -d $home ]]; then
     desk=$(sed -n 's/^XDG_DESKTOP_DIR="$HOME\/\(.*\)"/\1/p' "$home/.config/user-dirs.dirs" 2>/dev/null)

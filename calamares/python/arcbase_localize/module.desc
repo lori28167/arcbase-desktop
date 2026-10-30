@@ -1,0 +1,7 @@
+# Arcbase Desktop — lingua di sistema (locale.conf, localedef) e layout di KDE
+---
+type:       "job"
+name:       "arcbase_localize"
+interface:  "python"
+script:     "main.py"
+weight:     2

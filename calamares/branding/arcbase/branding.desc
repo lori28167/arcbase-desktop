@@ -1,0 +1,47 @@
+# =============================================================================
+#  Arcbase Desktop — branding di Calamares
+#
+#  Nome, versione e indirizzi vengono dall'os-release della live (${NAME},
+#  ${VERSION_ID}, ${VERSION_CODENAME}, ${HOME_URL}, ${BUG_REPORT_URL}), che
+#  scrive scripts/chroot/08-system-config.sh: così non si duplicano.
+#  logo.svg e welcome.svg li copia calamares/install.sh dai file del rootfs.
+# =============================================================================
+---
+componentName:  arcbase
+
+welcomeStyleCalamares:   false
+welcomeExpandingLogo:    true
+windowExpanding:    normal
+windowSize:         1000px,640px
+windowPlacement:    center
+sidebar:            widget
+navigation:         widget
+
+strings:
+    productName:         "${NAME}"
+    shortProductName:    "Arcbase"
+    version:             "${VERSION_ID}"
+    shortVersion:        "${VERSION_ID}"
+    versionedName:       "${NAME} ${VERSION_ID} (${VERSION_CODENAME})"
+    shortVersionedName:  "Arcbase ${VERSION_ID}"
+    bootloaderEntryName: "Arcbase"
+    productUrl:          "${HOME_URL}"
+    supportUrl:          "${BUG_REPORT_URL}"
+    knownIssuesUrl:      "${BUG_REPORT_URL}"
+    releaseNotesUrl:     "${HOME_URL}"
+    donateUrl:           "${HOME_URL}"
+
+images:
+    productIcon:         "logo.svg"
+    productLogo:         "logo.svg"
+    productWelcome:      "welcome.svg"
+
+# Stessi colori di arc UI: fondo #0f0d14, accento viola del logo (#8c52ff)
+style:
+    SidebarBackground:        "#0f0d14"
+    SidebarText:              "#FFFFFF"
+    SidebarTextCurrent:       "#FFFFFF"
+    SidebarBackgroundCurrent: "#8c52ff"
+
+slideshow:      "show.qml"
+slideshowAPI:   2

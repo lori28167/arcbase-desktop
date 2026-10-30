@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Arcbase Desktop — solo nella ISO live (calamares/install.sh).
+     Nella live l'installer parte senza password: lo avvia chi ha la sessione
+     grafica attiva. Non esiste nel sistema installato. -->
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Arcbase Desktop</vendor>
+  <vendor_url>https://github.com/lori28167/arcbase-desktop</vendor_url>
+
+  <action id="org.arcbase.installer.run">
+    <description>Run the Arcbase Desktop installer</description>
+    <message>Authentication is required to run the installer</message>
+    <icon_name>drive-harddisk</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/arcbase/installer-root</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

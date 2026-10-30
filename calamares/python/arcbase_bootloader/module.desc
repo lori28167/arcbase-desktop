@@ -1,0 +1,8 @@
+# Arcbase Desktop — installa GRUB con arcbase-bootloader (al posto del modulo
+# "bootloader" di Calamares: il sistema non ha initramfs né grub-mkconfig)
+---
+type:       "job"
+name:       "arcbase_bootloader"
+interface:  "python"
+script:     "main.py"
+weight:     3

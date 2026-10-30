@@ -30,6 +30,15 @@ echo 'x' > "$T/src/broken-0.1/README"
 tar -C "$T/src" -czf "$T/lfs/sources/hello-1.2.3.tar.gz" hello-1.2.3
 tar -C "$T/src" -czf "$T/lfs/sources/broken-0.1.tar.gz" broken-0.1
 echo PEM > "$T/lfs/sources/cert-2025.pem"
+# Sorgenti con SHA-256 in packages.conf (quarto campo): uno giusto, uno no
+mkdir -p "$T/src/pinned-1.0" "$T/src/forged-1.0"
+echo p > "$T/src/pinned-1.0/README"; echo f > "$T/src/forged-1.0/README"
+tar -C "$T/src" -czf "$T/lfs/sources/pinned-1.0.tar.gz" pinned-1.0
+tar -C "$T/src" -czf "$T/lfs/sources/forged-1.0.tar.gz" forged-1.0
+{
+    printf 'pinned  1.0  https://example.org/pinned-@V@.tar.gz  %s\n' "$(sha256sum "$T/lfs/sources/pinned-1.0.tar.gz" | cut -d' ' -f1)"
+    printf 'forged  1.0  https://example.org/forged-@V@.tar.gz  %064d\n' 0
+} >> "$T/tree/config/packages.conf"
 
 cat > "$T/tree/scripts/stage-test.sh" <<'EOF'
 #!/bin/bash
@@ -44,7 +53,11 @@ build_broken() {
     touch "$LFS/broken.reached" # ...e questa riga non deve essere eseguita
 }
 build_cert() { cp cert-*.pem "$LFS/cert.out"; }
+build_pinned() { touch "$LFS/pinned.ran"; }
+build_forged() { touch "$LFS/forged.ran"; }
 case ${1:-} in
+    pinned) build pinned ;;
+    forged) build forged ;;
     hello)  build hello ;;
     broken) build broken ;;
     cert)   build cert ;;
@@ -78,6 +91,15 @@ run broken >/dev/null 2>&1
 check "uscita con errore"               test $? -ne 0
 check "errexit attivo nella ricetta"    test ! -e "$T/lfs/broken.reached"
 check "nessuno stamp per il fallimento" test ! -e "$T/lfs/sources/.arcbase-stamps/test-broken.done"
+
+echo "SHA-256 dei sorgenti"
+run pinned >/dev/null 2>&1
+check "SHA-256 giusto: ricetta eseguita"        test -e "$T/lfs/pinned.ran"
+out=$(run forged 2>&1); rc=$?
+check "SHA-256 sbagliato: uscita con errore"    test $rc -ne 0
+check "SHA-256 sbagliato: ricetta non eseguita" test ! -e "$T/lfs/forged.ran"
+check "SHA-256 sbagliato: messaggio chiaro"     grep -q 'SHA-256 errato' <<<"$out"
+check "senza SHA-256 non si controlla nulla"    env LFS="$T/lfs" bash -c 'source "$0/scripts/lib/common.sh"; verify_source hello' "$T/tree"
 
 echo "configurazione ereditata da make"
 cfg() { env -u ARC_JOBS LFS="$T/lfs" "$@" bash -c 'source "$0/scripts/lib/common.sh"; '"$CMD" "$T/tree"; }
