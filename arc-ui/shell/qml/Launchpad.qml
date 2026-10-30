@@ -135,10 +135,24 @@ Item {
     }
 
     // ------------------------------------------------------------ griglia a pagine
-    readonly property int columns: Math.max(4, Math.min(8, Math.floor((width - 160) / 170)))
-    readonly property int rows: Math.max(3, Math.min(5, Math.floor((height - 280) / 165)))
-    readonly property real cellW: Math.min(170, (width - 120) / columns)
-    readonly property real cellH: Math.min(165, pages.height / rows)
+    // Griglia: le misure vengono dalla cartella (2×2 celle). Il suo lato va
+    // dal bordo di un'icona a quello dell'icona dopo (cella + icona) e vale
+    // 2,465 volte le sue icone grandi, che sono 1,15 volte le app (come la
+    // Libreria app di iPhone). Quindi cella = 1,835 icone visibili:
+    // icone da 106 (85 visibili), celle quadrate da 155, al massimo 7×4.
+    readonly property real appIcon: 106
+    readonly property real appBody: appIcon * Theme.iconBody
+    readonly property real labelSpace: 28          // spazio + riga del nome
+    readonly property real cellSize: Math.round(appBody * 1.835)
+    readonly property int columns: Math.max(4, Math.min(7, Math.floor((width - 160) / cellSize)))
+    // Margine generoso sopra e sotto: 3 righe su 900 px, 4 da 1080 in su
+    readonly property int rows: Math.max(2, Math.min(4, Math.floor((height - 360) / cellSize)))
+    readonly property real cellW: Math.min(cellSize, (width - 120) / columns)
+    readonly property real cellH: Math.min(cellSize, pages.height / rows)
+    // Dove sta l'icona nella cella (anche la cartella si allinea a questa riga)
+    readonly property real iconTop: (cellH - appIcon - labelSpace) / 2
+    // Alone attorno a un'icona: angoli concentrici con quelli visibili dell'icona
+    function haloRadius(size) { return (size - appBody) / 2 + appBody * Theme.iconCorner; }
     readonly property real gridX: (width - columns * cellW) / 2
     readonly property real gridY: (pages.height - rows * cellH) / 2
 
@@ -634,7 +648,7 @@ Item {
                 anchors.centerIn: icon
                 width: icon.width + 22
                 height: width
-                radius: 26
+                radius: pad.haloRadius(width)
                 color: Theme.surface3
                 visible: tile.highlighted
             }
@@ -643,7 +657,7 @@ Item {
                 anchors.centerIn: icon
                 width: icon.width + 26
                 height: width
-                radius: 30
+                radius: pad.haloRadius(width)
                 color: Theme.surface4
                 visible: tile.hinted
             }
@@ -651,9 +665,9 @@ Item {
                 id: icon
                 readonly property string source: "image://icon/" + name
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: (parent.height - height - label.height - 10) / 2
-                width: 88
-                height: 88
+                y: pad.iconTop
+                width: pad.appIcon
+                height: pad.appIcon
                 name: tile.app.iconName || "application-x-executable"
                 opacity: tile.dragging ? 0.25 : tile.pressed ? 0.8 : 1
                 scale: tile.hinted ? 1.08 : tile.containsMouse && !tile.dragging ? 1.04 : 1
@@ -676,7 +690,11 @@ Item {
         }
     }
 
-    // Cartella 2×2, come un widget: nome, fino a 9 app avviabili, "+N"
+    // Cartella (2×2 celle) come la Libreria app di iPhone: quadrato di vetro
+    // con 3 icone grandi e, nel quarto posto, 4 piccole in 2×2 (7 app
+    // avviabili; "+N" se sono di più). Il quadrato va dal bordo delle icone
+    // della prima cella a quello delle icone della seconda, in orizzontale e
+    // in verticale; il nome sta sulla riga dei nomi. Raggio concentrico.
     Component {
         id: folderTile
         MouseArea {
@@ -685,6 +703,17 @@ Item {
             readonly property string appId: entry.id || ""
             readonly property bool hinted: pad.dropHint !== "" && pad.dropHint === appId
             readonly property bool dragging: pad.dragId !== "" && pad.dragId === appId
+            readonly property var apps: entry.apps || []
+
+            // Lato visibile di un'icona grande e spazi, in proporzione
+            readonly property real labelHeight: 24
+            readonly property real inset: (pad.appIcon - pad.appBody) / 2   // margine trasparente delle icone
+            readonly property real side: Math.min(pad.cellW, pad.cellH) + pad.appBody
+            readonly property real body: side / 2.465
+            readonly property real edge: body * 0.17           // dal bordo del contenitore
+            readonly property real gap: body * 0.125           // tra icone grandi
+            readonly property real smallGap: body * 0.054      // tra icone piccole
+            readonly property real smallBody: (body - smallGap) / 2
 
             hoverEnabled: true
             drag.target: dragProxy
@@ -715,69 +744,97 @@ Item {
 
             GlassPanel {
                 id: card
-                anchors.fill: parent
-                anchors.margins: 12
-                radius: 30
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: pad.iconTop + ftile.inset
+                width: 2 * ftile.body + ftile.gap + 2 * ftile.edge
+                height: 2 * ftile.body + ftile.gap + 2 * ftile.edge
+                // Concentrico: angolo dell'icona + distanza dal bordo
+                radius: ftile.body * Theme.iconCorner + ftile.edge
                 opacity: ftile.dragging ? 0.3 : 1
                 scale: ftile.hinted ? 1.04 : ftile.containsMouse ? 1.015 : 1
                 border.color: ftile.hinted ? Theme.borderHi : Theme.materialBorder
                 Behavior on scale { NumberAnimation { duration: Theme.fast; easing.type: Easing.OutCubic } }
 
-                Text {
-                    x: 20
-                    y: 16
-                    width: parent.width - 40
-                    text: ftile.entry.name || ""
-                    elide: Text.ElideRight
-                    color: Theme.text
-                    font.family: Theme.font
-                    font.pixelSize: 15
-                    font.weight: Font.DemiBold
-                }
-                Grid {
-                    id: mini
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.verticalCenterOffset: 16
-                    columns: 3
-                    spacing: 12
-                    readonly property real size: Math.min((card.width - 64) / 3, (card.height - 82) / 3)
-
-                    Repeater {
-                        model: (ftile.entry.apps || []).slice(0, 9)
-                        MouseArea {
-                            id: miniApp
-                            required property string modelData
-                            required property int index
-                            readonly property bool more: index === 8 && ftile.entry.apps.length > 9
-                            width: mini.size
-                            height: mini.size
-                            hoverEnabled: true
-                            onClicked: more ? pad.folderId = ftile.appId : Applications.launch(modelData)
-                            AppIcon {
-                                anchors.fill: parent
-                                visible: !miniApp.more
-                                name: Applications.byId(miniApp.modelData).iconName || "application-x-executable"
-                                scale: miniApp.pressed ? 0.9 : miniApp.containsMouse ? 1.08 : 1
-                                Behavior on scale { NumberAnimation { duration: Theme.fast } }
-                            }
-                            Rectangle {
-                                anchors.fill: parent
-                                visible: miniApp.more
-                                radius: width * 0.24
-                                color: Theme.surface3
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "+" + (ftile.entry.apps.length - 8)
-                                    color: Theme.text
-                                    font.family: Theme.font
-                                    font.pixelSize: 15
-                                    font.weight: Font.DemiBold
-                                }
-                            }
-                        }
+                // 3 posti grandi: in alto a sinistra, in alto a destra, in basso a sinistra
+                Repeater {
+                    model: ftile.apps.slice(0, 3)
+                    FolderIcon {
+                        required property int index
+                        x: ftile.edge + (index % 2) * (ftile.body + ftile.gap)
+                        y: ftile.edge + Math.floor(index / 2) * (ftile.body + ftile.gap)
+                        side: ftile.body
+                        onLaunched: Applications.launch(modelData)
                     }
                 }
+                // Quarto posto: 4 piccole (dalla quarta app)
+                Repeater {
+                    model: ftile.apps.slice(3, 7)
+                    FolderIcon {
+                        required property int index
+                        x: ftile.edge + ftile.body + ftile.gap + (index % 2) * (ftile.smallBody + ftile.smallGap)
+                        y: ftile.edge + ftile.body + ftile.gap + Math.floor(index / 2) * (ftile.smallBody + ftile.smallGap)
+                        side: ftile.smallBody
+                        more: index === 3 && ftile.apps.length > 7
+                        extra: ftile.apps.length - 6
+                        onLaunched: Applications.launch(modelData)
+                        onMoreClicked: pad.folderId = ftile.appId
+                    }
+                }
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                // Sulla riga dei nomi della seconda fila
+                y: pad.cellH + pad.iconTop + pad.appIcon + 10
+                width: card.width
+                horizontalAlignment: Text.AlignHCenter
+                text: ftile.entry.name || ""
+                elide: Text.ElideRight
+                color: Theme.text
+                style: Text.Raised
+                styleColor: Qt.rgba(0, 0, 0, 0.35)
+                font.family: Theme.font
+                font.pixelSize: 14
+                font.weight: Font.Medium
+                opacity: ftile.dragging ? 0.3 : 1
+            }
+        }
+    }
+
+    // Un'icona nell'anteprima della cartella: "side" è il lato visibile,
+    // l'immagine è più grande (le icone hanno un margine trasparente)
+    component FolderIcon: MouseArea {
+        id: icon
+        required property string modelData
+        property real side
+        property bool more: false
+        property int extra: 0
+        signal launched()
+        signal moreClicked()
+        width: side
+        height: side
+        hoverEnabled: true
+        onClicked: more ? moreClicked() : launched()
+        AppIcon {
+            anchors.centerIn: parent
+            width: icon.side / Theme.iconBody
+            height: width
+            visible: !icon.more
+            name: Applications.byId(icon.modelData).iconName || "application-x-executable"
+            scale: icon.pressed ? 0.9 : icon.containsMouse ? 1.06 : 1
+            Behavior on scale { NumberAnimation { duration: Theme.fast } }
+        }
+        Rectangle {
+            anchors.fill: parent
+            visible: icon.more
+            radius: width * Theme.iconCorner
+            color: Theme.surface3
+            Text {
+                anchors.centerIn: parent
+                text: "+" + icon.extra
+                color: Theme.text
+                font.family: Theme.font
+                font.pixelSize: Math.max(10, icon.side * 0.36)
+                font.weight: Font.DemiBold
             }
         }
     }
