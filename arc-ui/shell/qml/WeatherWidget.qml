@@ -27,19 +27,39 @@ Item {
     Component.onCompleted: Qt.callLater(refresh)
     Timer { interval: 30 * 60 * 1000; running: true; repeat: true; onTriggered: widget.refresh() }
 
+    // Senza rete (di solito all'avvio della sessione, prima che NetworkManager
+    // si colleghi) o con il servizio fuori uso si riprova presto e appena la
+    // rete cambia, non dopo mezz'ora
+    property bool offline: false
+    function fail() {
+        widget.error = "Meteo non disponibile";
+        widget.offline = true;
+        retry.restart();
+    }
+    Timer { id: retry; interval: 60 * 1000; onTriggered: widget.refresh() }
+    Connections {
+        target: Shell
+        ignoreUnknownSignals: true
+        function onNetworkChanged() {
+            if (widget.offline && Shell.networkType !== "none") Qt.callLater(widget.refresh);
+        }
+    }
+
     function get(url, done) {
         const id = serial;
         const xhr = new XMLHttpRequest();
         xhr.onreadystatechange = () => {
             if (xhr.readyState !== XMLHttpRequest.DONE || id !== widget.serial) return;
-            if (xhr.status !== 200) { widget.error = "Meteo non disponibile"; return; }
-            try { done(JSON.parse(xhr.responseText)); } catch (e) { widget.error = "Meteo non disponibile"; }
+            if (xhr.status !== 200) { widget.fail(); return; }
+            try { done(JSON.parse(xhr.responseText)); } catch (e) { widget.fail(); }
         };
         xhr.open("GET", url);
         xhr.send();
     }
     function refresh() {
         ++serial;
+        offline = false;
+        retry.stop();
         if (city === "") return;
         get("https://geocoding-api.open-meteo.com/v1/search?count=1&language=it&format=json&name=" + encodeURIComponent(city), geo => {
             if (!geo.results || geo.results.length === 0) { widget.error = "Città non trovata"; return; }
@@ -49,6 +69,7 @@ Item {
                 + "&current=temperature_2m,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min"
                 + "&timezone=auto&forecast_days=6", f => {
                 widget.error = "";
+                widget.offline = false;
                 widget.temperature = f.current.temperature_2m;
                 widget.code = f.current.weather_code;
                 widget.day = f.current.is_day === 1;

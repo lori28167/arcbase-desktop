@@ -214,6 +214,7 @@ check "margini delle superfici dinamici"     has "$UI/shell/src/shell.cpp" 'void
 check "finestra attiva da libtaskmanager"    has "$UI/shell/qml/ActiveWindowTasks.qml" 'tasks.activeTask'
 check "shell senza QtQuick.Controls (stile Plasma)" bash -c '! grep -rq "import QtQuick.Controls" "$0/shell" "$0/theme"' "$UI"
 check "nessun import di Plasma nella shell"  bash -c '! grep -rqE "import org\.kde\.(plasma|ksvg)" "$0"' "$UI"
+check "Cestino: Svuota lo svuota davvero"   has "$UI/shell/qml/DockWindow.qml" 'Shell.run("ktrash6", ["--empty"])'
 
 echo
 echo "Risultato: $pass superati, $fail falliti"

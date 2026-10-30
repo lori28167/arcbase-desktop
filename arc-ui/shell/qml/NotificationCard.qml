@@ -47,6 +47,7 @@ Item {
             spacing: 6
             Text {
                 text: card.appName
+                textFormat: Text.PlainText
                 visible: text !== ""
                 color: Theme.sub
                 font.family: Theme.font
@@ -66,6 +67,9 @@ Item {
         Text {
             width: parent.width
             text: card.summary
+            // Testo semplice (specifica freedesktop): con il formato automatico
+            // "Mail da Mario <mario@x.it>" perderebbe l'indirizzo, preso per un tag
+            textFormat: Text.PlainText
             color: Theme.text
             font.family: Theme.font
             font.pixelSize: 14

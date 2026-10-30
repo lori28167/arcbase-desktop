@@ -241,7 +241,7 @@ Window {
                     zone.openMenu(p.x, p.y, [
                         { text: "Apri il Cestino", icon: "trash", action: () => Shell.openTrash() },
                         { text: "Svuota il Cestino", icon: "close", danger: true,
-                          action: () => Shell.run("kioclient", ["exec", "trash:/"]) }
+                          action: () => Shell.run("ktrash6", ["--empty"]) }
                     ]);
                 }
             }
