@@ -78,6 +78,9 @@ overlay() {
 }
 
 users() {
+    # `step` esegue con set -x e il log resta leggibile da tutti sull'host di
+    # build: senza questo le password finirebbero lì in chiaro
+    { set +x; } 2>/dev/null
     echo "root:$ARC_ROOT_PASSWORD" | chpasswd
     if ! id "$ARC_USER" >/dev/null 2>&1; then
         useradd -m -c "$ARC_USER_FULLNAME" -G wheel,audio,video,input,render,users "$ARC_USER"

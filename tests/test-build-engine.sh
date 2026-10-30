@@ -91,6 +91,29 @@ check "ARC_DESKTOP passato al chroot"           grep -qx 'ARC_DESKTOP=gnome' <<<
 check "password passate al chroot"              grep -qx 'ARC_ROOT_PASSWORD=segreta' <<<"$out"
 check "LFS stesso non passato (vale \"\" nel chroot)" bash -c '! grep -q "^LFS=" <<<"$0"' "$out"
 
+echo "password fuori dai log"
+# La funzione users() reale di 08-system-config.sh, eseguita da `step` (che usa
+# set -x) con chpasswd e useradd finti: le password devono arrivare a chpasswd
+# ma non comparire nel log, leggibile da tutti sull'host di build
+mkdir -p "$T/mock"
+printf '#!/bin/sh\ncat >> "%s"\n' "$T/chpasswd.in" > "$T/mock/chpasswd"
+printf '#!/bin/sh\nexit 0\n' > "$T/mock/useradd"
+printf '#!/bin/sh\nexit 1\n' > "$T/mock/id"
+chmod +x "$T/mock"/*
+cat > "$T/tree/scripts/stage-users.sh" <<'EOF'
+#!/bin/bash
+STAGE=ch9
+source "$(dirname "$0")/lib/common.sh"
+eval "$(sed -n '/^users() {/,/^}/p' "$(dirname "$0")/chroot/08-system-config.sh")"
+step users users
+EOF
+chmod +x "$T/tree/scripts/stage-users.sh"
+PATH="$T/mock:$PATH" LFS=$T/lfs ARC_ROOT_PASSWORD=pwroot-9X ARC_USER_PASSWORD=pwuser-7Y \
+    "$T/tree/scripts/stage-users.sh" >/dev/null 2>&1
+check "password consegnate a chpasswd"          bash -c 'grep -qx "root:pwroot-9X" "$0" && grep -qx "arc:pwuser-7Y" "$0"' "$T/chpasswd.in"
+check "stadio completato"                       test -e "$T/lfs/sources/.arcbase-stamps/ch9-users.done"
+check "password assenti dal log"                bash -c '! grep -rqE "pwroot-9X|pwuser-7Y" "$0"' "$T/lfs/sources/.arcbase-logs"
+
 echo
 echo "Risultato: $pass superati, $fail falliti"
 (( fail == 0 ))
