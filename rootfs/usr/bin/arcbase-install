@@ -148,6 +148,10 @@ fi
 [[ $user =~ ^[a-z_][a-z0-9_-]{0,31}$ && $user != root ]] || die "nome utente non valido: $user"
 [[ -f $SOURCE/usr/share/zoneinfo/$timezone ]] || die "fuso orario sconosciuto: $timezone"
 [[ $keymap =~ ^[a-zA-Z0-9_-]+$ ]] || die "tastiera non valida: $keymap"
+# usermod/chpasswd rifiuterebbero questi valori solo a disco già cancellato e
+# sistema copiato: meglio fermarsi prima
+[[ $fullname != *[:$'\n']* ]] || die "il nome completo non può contenere ':' né andare a capo"
+[[ $password != *$'\n'* && $root_password != *$'\n'* ]] || die "le password non possono contenere un a capo"
 
 summary="Disco:        $disk ($(lsblk -dno SIZE "$disk"), $(lsblk -dno MODEL "$disk" | xargs))
 Nome host:    $hostname
@@ -179,11 +183,27 @@ cleanup() {
 trap cleanup EXIT
 
 msg "Partizionamento di $disk"
-for p in $(lsblk -lnpo NAME "$disk" | tail -n +2); do
-    mountpoint -q "$p" 2>/dev/null && umount "$p"
+# Dispositivi sul disco, con quelli sopra le partizioni (cifrati, LVM...) prima
+# delle partizioni. `lsblk -l` ordina per nome, non ad albero (/dev/mapper/...
+# viene prima del disco): si sceglie per tipo, non per posizione.
+disk_children() {
+    lsblk -lnpo NAME,TYPE "$disk" | awk '$2 == "part" { parts = parts $1 "\n"; next } $2 != "disk" { print $1 } END { printf "%s", parts }'
+}
+is_mounted() {  # is_mounted <dispositivo>: ha punti di montaggio (esclusa la swap)?
+    local m
+    while IFS= read -r m; do
+        [[ -n $m && $m != '[SWAP]' ]] && return 0
+    done < <(lsblk -no MOUNTPOINTS "$1")
+    return 1
+}
+for p in $(disk_children); do
     swapoff "$p" 2>/dev/null || :
+    # (`mountpoint` non accetta i file di dispositivo e risponde sempre "no")
+    if is_mounted "$p"; then
+        umount -A "$p" || die "impossibile smontare $p: chiudi i programmi che lo usano e riprova"
+    fi
 done
-wipefs -a -q "$disk"
+wipefs -a -q "$disk" || die "$disk è ancora in uso (volumi LVM, RAID o cifrati attivi?): chiudili e riprova"
 sfdisk --quiet --wipe always "$disk" <<EOF
 label: gpt
 size=1MiB,   type=21686148-6449-6E6F-744E-656564454649, name="bios"

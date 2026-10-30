@@ -322,13 +322,14 @@ arc install -y --deb dup >/dev/null 2>&1
 check "il wrapper resta del primo pacchetto"    has "$T/local/bin/fakels-tool" "# arcbase-export: fakels "
 arc remove -y dup >/dev/null 2>&1
 check "rimuovere il secondo non lo cancella"     test -x "$T/local/bin/fakels-tool"
-# link simbolico assoluto dentro il layer
-mkdir -p "$L/usr/share/code/bin"
-printf '#!/bin/sh\n' > "$L/usr/share/code/bin/code"; chmod +x "$L/usr/share/code/bin/code"
-ln -s /usr/share/code/bin/code "$L/usr/bin/code"
-printf '/usr/bin/code\n' > "$T/pkgfiles/code"; echo code >> "$T/deb-available"
-arc install -y --deb code >/dev/null 2>&1
-check "link assoluto risolto nel layer"         test -x "$T/local/bin/code"
+# link simbolico assoluto dentro il layer (nome di comando inventato: un
+# comando con lo stesso nome sull'host, es. "code" di VS Code, verrebbe saltato)
+mkdir -p "$L/usr/share/arcfake/bin"
+printf '#!/bin/sh\n' > "$L/usr/share/arcfake/bin/arcfake-edit"; chmod +x "$L/usr/share/arcfake/bin/arcfake-edit"
+ln -s /usr/share/arcfake/bin/arcfake-edit "$L/usr/bin/arcfake-edit"
+printf '/usr/bin/arcfake-edit\n' > "$T/pkgfiles/arcfake"; echo arcfake >> "$T/deb-available"
+arc install -y --deb arcfake >/dev/null 2>&1
+check "link assoluto risolto nel layer"         test -x "$T/local/bin/arcfake-edit"
 
 echo "pacchetto Debian con il nome di un componente del base"
 echo vim >> "$T/arch-provided"; echo vim >> "$T/deb-available"; : > "$T/pkgfiles/vim"
@@ -373,6 +374,32 @@ check "locale-gen eseguito nel layer"       has "$T/bwrap.log" "[root] locale-ge
 check "baseline registrata"                 has "$T/state/debian-baseline.list" "apt"
 check "punto di montaggio dei font"         test -d "$N/usr/local/share/fonts"
 check "machine-id creato come punto di montaggio" test -e "$N/etc/machine-id"
+
+echo "arcbase-install: dischi con partizioni montate"
+# lsblk finto: un volume cifrato il cui nome (/dev/mapper/...) viene PRIMA del
+# disco nell'elenco ordinato per nome, una ESP montata e una partizione di swap
+mkdir -p "$T/lsblk-bin"
+cat > "$T/lsblk-bin/lsblk" <<'EOF'
+#!/bin/bash
+case "$*" in
+    *"-lnpo NAME,TYPE"*) printf '%s\n' '/dev/mapper/luks-x crypt' '/dev/vda disk' '/dev/vda1 part' '/dev/vda2 part' ;;
+    *"MOUNTPOINTS /dev/vda1") printf '%s\n' '/boot/efi' ;;
+    *"MOUNTPOINTS /dev/vda2") printf '%s\n' '[SWAP]' ;;
+    *"MOUNTPOINTS /dev/mapper/luks-x") printf '%s\n' '/home' '/' ;;
+esac
+EOF
+chmod +x "$T/lsblk-bin/lsblk"
+INSTALL=$REPO/rootfs/usr/bin/arcbase-install
+# le funzioni si provano così come stanno nello script
+eval "$(sed -n '/^disk_children() {/,/^}/p; /^is_mounted() {/,/^}/p' "$INSTALL")"
+# shellcheck disable=SC2034  # la legge disk_children (caricata con eval)
+disk=/dev/vda
+out=$(PATH="$T/lsblk-bin:$PATH" disk_children | paste -sd' ')
+check "dispositivi per tipo: niente disco, cifrato prima" test "$out" = "/dev/mapper/luks-x /dev/vda1 /dev/vda2"
+check "partizione montata riconosciuta"   env PATH="$T/lsblk-bin:$PATH" bash -c "$(declare -f is_mounted); is_mounted /dev/vda1"
+check "volume cifrato montato riconosciuto" env PATH="$T/lsblk-bin:$PATH" bash -c "$(declare -f is_mounted); is_mounted /dev/mapper/luks-x"
+check "la swap non conta come montata"    env PATH="$T/lsblk-bin:$PATH" bash -c "$(declare -f is_mounted); ! is_mounted /dev/vda2"
+check "mountpoint non usato sui dispositivi" hasnt "$INSTALL" 'mountpoint -q "$p"'
 
 echo
 echo "Risultato: $pass superati, $fail falliti"
