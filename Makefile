@@ -119,6 +119,7 @@ test:
 	tests/test-kernel-mirror.sh
 	tests/test-arc-ui.sh
 	tests/test-calamares.sh
+	tests/test-ssc.sh
 
 clean-stamps:
 	@source config/arcbase.conf && rm -rfv "$$LFS/sources/.arcbase-stamps"

@@ -9,8 +9,9 @@
 #  4. installa il desktop scelto (config/desktop/$ARC_DESKTOP.list)
 #  5. solo ARC_DESKTOP=arc: compila arc-shell e installa i temi di arc-ui/
 #  6. con ARC_CALAMARES: compila l'installer grafico Calamares
-#  7. abilita display manager e NetworkManager, configura sudo
-#  8. crea il layer Debian e vi installa $ARC_DEBIAN_PACKAGES
+#  7. con ARC_SSC: compila il plugin PipeWire del codec Bluetooth SSC (Galaxy Buds)
+#  8. abilita display manager e NetworkManager, configura sudo
+#  9. crea il layer Debian e vi installa $ARC_DEBIAN_PACKAGES
 # =============================================================================
 STAGE=desktop
 # shellcheck source=../lib/common.sh
@@ -178,6 +179,40 @@ build_calamares() {
     done
 }
 
+# --- Codec Bluetooth SSC (Galaxy Buds) ------------------------------------------
+# Plugin PipeWire (sorgente di packages.conf, SHA-256 fissato). Prende lo slot
+# "aptx" di pipewire-audio: lo compila e lo installa `arcbase-ssc build-here`
+# (lo stesso passo di `arcbase-ssc rebuild`), poi l'hook 95-arcbase-ssc lo tiene
+# al suo posto a ogni aggiornamento di pipewire-audio.
+ssc_enabled() {
+    case $ARC_SSC in
+        yes)  return 0 ;;
+        auto) pacman -Q pipewire-audio >/dev/null 2>&1 ;;
+        *)    return 1 ;;
+    esac
+}
+
+# pipewire-audio porta i file di sviluppo di libspa, bluez-libs gli header Bluetooth
+ssc_deps() {
+    pac -S --needed pipewire-audio bluez-libs
+}
+
+build_ssc() {
+    local conf=/usr/share/arcbase/ssc.conf plugin=libspa-codec-bluez5-aptx.so
+    mkdir -p "${conf%/*}"
+    # da qui `arcbase-ssc rebuild` ricompila lo stesso sorgente dopo un aggiornamento di PipeWire
+    cat > "$conf" <<CONF
+# Arcbase Desktop — sorgente del plugin SSC (arcbase-ssc rebuild), da config/packages.conf
+SSC_URL='$(pkg_url ssc)'
+SSC_SHA256='${PKG_SHA256[ssc]}'
+CONF
+    arcbase-ssc build-here
+    # lo slot aptx di Arch passa al plugin SSC (lo stesso fa l'hook a ogni aggiornamento)
+    /usr/share/libalpm/scripts/arcbase-ssc-activate
+    cmp -s "/usr/lib/ssc-codec/$plugin" "/usr/lib/spa-0.2/bluez5/$plugin" \
+        || die "il plugin SSC non ha preso lo slot aptx di PipeWire"
+}
+
 configure_desktop() {
     local dm=''
     if [[ -f $LIST ]]; then
@@ -233,6 +268,10 @@ step arc-ui       arc_ui
 if calamares_enabled; then
     step calamares-deps calamares_deps
     build calamares
+fi
+if ssc_enabled; then
+    step ssc-deps ssc_deps
+    build ssc
 fi
 step desktop-conf configure_desktop
 step debian-layer debian_layer

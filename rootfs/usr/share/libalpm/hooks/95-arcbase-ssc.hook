@@ -1,0 +1,13 @@
+# Arcbase Desktop — pipewire-audio porta libspa-codec-bluez5-aptx.so, lo slot del
+# plugin SSC: dopo ogni suo aggiornamento il plugin SSC torna al suo posto
+# (se è compilato per la stessa versione di PipeWire, vedi arcbase-ssc)
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = pipewire-audio
+
+[Action]
+Description = Attivo il plugin SSC per le Galaxy Buds (al posto di aptx)...
+When = PostTransaction
+Exec = /usr/share/libalpm/scripts/arcbase-ssc-activate

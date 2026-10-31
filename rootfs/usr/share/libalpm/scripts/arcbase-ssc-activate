@@ -1,0 +1,48 @@
+#!/bin/bash
+# =============================================================================
+#  Arcbase Desktop — mette il plugin SSC al posto di quello aptx di PipeWire
+#
+#  pipewire-audio porta libspa-codec-bluez5-aptx.so, lo slot che usa il plugin
+#  SSC (il file ha lo stesso nome). Questo script lo rimette al suo posto dopo
+#  ogni installazione o aggiornamento di pipewire-audio (ssc-codec.hook), da
+#  `arcbase-ssc enable` e da `arcbase-ssc rebuild`.
+#
+#  Il plugin usa l'interfaccia dei codec di PipeWire, che è privata: va usato
+#  solo con la versione per cui è stato compilato (built-for). Con un PipeWire
+#  diverso resta il plugin di Arch finché non si esegue `arcbase-ssc rebuild`.
+#  Il plugin di Arch sostituito viene conservato in $SSC_DIR/aptx-arch.so.
+#
+#  Variabili (per i test): SSC_DIR, SPA_DIR, PW_PC, SSC_DISABLED
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+SSC_DIR=${SSC_DIR:-/usr/lib/ssc-codec}
+SPA_DIR=${SPA_DIR:-/usr/lib/spa-0.2/bluez5}
+PW_PC=${PW_PC:-/usr/lib/pkgconfig/libpipewire-0.3.pc}
+DISABLED=${SSC_DISABLED:-/etc/arcbase/ssc.disabled}
+NAME=libspa-codec-bluez5-aptx.so
+
+src=$SSC_DIR/$NAME
+dst=$SPA_DIR/$NAME
+
+[[ -f $src && -d $SPA_DIR ]] || exit 0
+if [[ -e $DISABLED ]]; then
+    echo ":: SSC: disattivato (arcbase-ssc enable per riattivarlo)"
+    exit 0
+fi
+
+built=$(cat "$SSC_DIR/built-for" 2>/dev/null || true)
+now=$(sed -n 's/^Version:[[:space:]]*//p' "$PW_PC" 2>/dev/null | head -n1 || true)
+if [[ -z $built || $built != "$now" ]]; then
+    echo ":: SSC: il plugin è compilato per PipeWire ${built:-?}, ma c'è ${now:-?}: resta il plugin aptx di Arch." >&2
+    echo ":: SSC: per usare il codec SSC esegui: sudo arcbase-ssc rebuild" >&2
+    exit 0
+fi
+
+cmp -s "$src" "$dst" 2>/dev/null && exit 0
+# il file in $dst è quello di Arch (o di una versione precedente): conservalo
+[[ -f $dst ]] && install -m755 "$dst" "$SSC_DIR/aptx-arch.so"
+install -m755 "$src" "$dst.new"
+mv -f "$dst.new" "$dst"
+echo ":: SSC: plugin attivato (prende lo slot aptx). Riavvia WirePlumber e riconnetti le cuffie:"
+echo "::      systemctl --user restart wireplumber"

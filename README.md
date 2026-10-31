@@ -249,6 +249,36 @@ Per installare su una partizione reale invece che su un'immagine, dopo aver copi
 sistema si usa `arcbase-bootloader --disk /dev/sdX --root /dev/sdX3 --esp /dev/sdX2`
 (senza `efibootmgr` GRUB viene installato nel percorso UEFI di fallback `\EFI\BOOT`).
 
+### Codec Bluetooth SSC (Galaxy Buds)
+
+Arcbase include **SSC**, il codec A2DP *Samsung Scalable Codec* (quello delle Galaxy Buds
+"Seamless"), come plugin per PipeWire: [SamsungScalableCodec-linux](https://github.com/lori28167/SamsungScalableCodec-linux)
+(GPL-3.0-or-later; il bitstream è CELT con poche differenze, il codice è indipendente e
+non contiene codice Samsung). Il plugin si compila nello stadio `desktop` dal sorgente di
+`config/packages.conf` (commit e SHA-256 fissati) e viene collaudato prima dell'installazione.
+
+PipeWire carica i codec da un elenco fisso di nomi, quindi il plugin **prende lo slot
+`aptx`** (stesso nome di file, `libspa-codec-bluez5-aptx.so`): le cuffie che non parlano SSC
+ripiegano sugli altri codec (AAC, SBC, LDAC…), ma aptx e aptx HD non sono più disponibili.
+Il file di Arch viene conservato e si ripristina con `arcbase-ssc disable`.
+
+Il plugin usa l'interfaccia dei codec di PipeWire, che è privata, e funziona solo con la
+versione di PipeWire per cui è compilato. L'hook pacman `95-arcbase-ssc.hook` lo rimette al
+suo posto dopo ogni aggiornamento di `pipewire-audio` **solo se la versione è la stessa**;
+dopo un aggiornamento di PipeWire resta il plugin di Arch finché non si esegue:
+
+```bash
+sudo arcbase-ssc rebuild   # scarica il sorgente fissato, verifica lo SHA-256, compila, prova, installa
+arcbase-ssc status         # stato del plugin e codec in uso
+sudo arcbase-ssc disable   # rimette aptx (e `enable` per riattivare SSC)
+```
+
+Dopo l'attivazione si riavvia WirePlumber (`systemctl --user restart wireplumber`) e si
+riconnettono le cuffie; nelle impostazioni audio compaiono i profili `ssc` (44,1/48 kHz) e
+`ssc_uhq` (96 kHz). Si controlla con `ARC_SSC` (`yes`, `no`, `auto`: sì se c'è `pipewire-audio`).
+Progetto indipendente, non affiliato a Samsung; funziona con le Galaxy Buds3 Pro, le altre
+cuffie non sono state provate.
+
 ### Kernel aggiornati (mirror)
 
 Il kernel della build resta fisso, ma un server di casa può compilare, provare in QEMU
@@ -286,6 +316,7 @@ sovrascrivono in `config/local.conf` o come variabili d'ambiente. Le principali:
 | `ARC_PREFER` | `arch` | chi vince in `arc install <nome>` se esiste in entrambi |
 | `ARC_RUNTIME_SYNC` | `auto` | allineamento ABI di glibc/gcc-libs ad Arch |
 | `ARC_CALAMARES` | `auto` | installer grafico Calamares nella ISO: `yes`, `no`, `auto` (sì con `kde`/`arc`) |
+| `ARC_SSC` | `auto` | plugin PipeWire del codec Bluetooth SSC (Galaxy Buds): `yes`, `no`, `auto` (sì con `pipewire-audio`) |
 | `ARC_IMAGE_SIZE` | `32G` | dimensione dell'immagine disco |
 | `ARC_JOBS` | numero di CPU | processi di compilazione paralleli |
 | `LFS_TESTS` | `0` | `1` esegue le test suite di LFS (molto più lento) |
@@ -351,6 +382,8 @@ calamares/                   installer grafico (Calamares) della ISO live, vedi 
   python/                    moduli scritti per Arcbase: arcbase_bootloader, arcbase_localize
   branding/arcbase/          aspetto: logo, slideshow, foglio di stile
   bin/, polkit/              lanciatore dalla sessione live (pkexec, senza password)
+rootfs/usr/bin/arcbase-ssc      plugin PipeWire del codec SSC: status, enable, disable, rebuild
+rootfs/usr/share/libalpm/      hook 95-arcbase-ssc e arcbase-ssc-activate (SSC dopo ogni aggiornamento di PipeWire)
 tests/                       test senza root né rete
 ```
 
@@ -369,6 +402,8 @@ make test    # suite:
              #    sessione arc, controlli statici di QML e C++
              #  - test-calamares: configurazione dell'installer grafico, sequenza,
              #    helper di avvio, moduli Python con libcalamares simulato
+             #  - test-ssc: sorgente e ricetta del codec SSC, hook pacman, attivazione
+             #    dopo gli aggiornamenti di PipeWire, arcbase-ssc (anche rebuild)
 ```
 
 La CI su GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) esegue

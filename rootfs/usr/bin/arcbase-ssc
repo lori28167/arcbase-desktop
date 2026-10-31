@@ -1,0 +1,150 @@
+#!/bin/bash
+# =============================================================================
+#  arcbase-ssc — plugin PipeWire per il codec Bluetooth SSC (Galaxy Buds)
+#
+#  SSC (Samsung Scalable Codec) è un codec A2DP di Samsung, basato su CELT. Il
+#  plugin (https://github.com/lori28167/SamsungScalableCodec-linux) prende lo
+#  slot "aptx" di PipeWire: con SSC attivo aptx e aptx HD non sono disponibili,
+#  e le cuffie che non parlano SSC ripiegano sugli altri codec (AAC, SBC...).
+#
+#  Uso:
+#    arcbase-ssc status     stato del plugin e codec in uso
+#    arcbase-ssc enable     attiva il plugin (root)
+#    arcbase-ssc disable    rimette il plugin aptx di Arch (root)
+#    arcbase-ssc rebuild    scarica, compila, prova e installa il plugin (root);
+#                           serve dopo un aggiornamento di PipeWire
+#
+#  Il plugin usa l'interfaccia dei codec di PipeWire, privata: l'hook pacman
+#  (arcbase-ssc-activate) lo tiene attivo solo con la versione di PipeWire per
+#  cui è stato compilato; dopo un aggiornamento resta il plugin di Arch finché
+#  non si esegue `arcbase-ssc rebuild`.
+#
+#  Variabili (per i test): SSC_DIR, SPA_DIR, PW_PC, SSC_DISABLED, SSC_CONF,
+#  SSC_ACTIVATE
+# =============================================================================
+set -o errexit -o nounset -o pipefail
+
+SSC_DIR=${SSC_DIR:-/usr/lib/ssc-codec}
+SPA_DIR=${SPA_DIR:-/usr/lib/spa-0.2/bluez5}
+PW_PC=${PW_PC:-/usr/lib/pkgconfig/libpipewire-0.3.pc}
+DISABLED=${SSC_DISABLED:-/etc/arcbase/ssc.disabled}
+SSC_CONF=${SSC_CONF:-/usr/share/arcbase/ssc.conf}
+ACTIVATE=${SSC_ACTIVATE:-/usr/share/libalpm/scripts/arcbase-ssc-activate}
+LICENSE_DIR=${SSC_LICENSE_DIR:-/usr/share/licenses/ssc-codec}
+NAME=libspa-codec-bluez5-aptx.so
+
+die() { echo "arcbase-ssc: $*" >&2; exit 1; }
+need_root() { [[ $EUID -eq 0 || ${ARC_ASSUME_ROOT:-0} == 1 ]] || die "serve root (sudo arcbase-ssc $cmd)"; }
+pw_version() { sed -n 's/^Version:[[:space:]]*//p' "$PW_PC" 2>/dev/null | head -n1 || true; }
+
+cmd_status() {
+    local built now state
+    built=$(cat "$SSC_DIR/built-for" 2>/dev/null || true)
+    now=$(pw_version)
+    if [[ ! -f $SSC_DIR/$NAME ]]; then
+        echo "plugin SSC:  non installato (arcbase-ssc rebuild per compilarlo)"
+        return 0
+    fi
+    if [[ -e $DISABLED ]]; then
+        state="disattivato (arcbase-ssc enable)"
+    elif [[ $built != "$now" ]]; then
+        state="non attivo: compilato per PipeWire ${built:-?}, installato ${now:-?} (arcbase-ssc rebuild)"
+    elif cmp -s "$SSC_DIR/$NAME" "$SPA_DIR/$NAME" 2>/dev/null; then
+        state="attivo (al posto di aptx)"
+    else
+        state="non attivo: lo slot aptx è quello di Arch (arcbase-ssc enable)"
+    fi
+    echo "plugin SSC:  $state"
+    echo "compilato per PipeWire ${built:-?}, installato ${now:-?}"
+    if [[ $EUID -ne 0 ]] && command -v pw-dump >/dev/null; then
+        pw-dump 2>/dev/null | sed -n 's/.*"api.bluez5.codec": *"\([^"]*\)".*/codec in uso: \1/p' | sort -u || true
+    fi
+}
+
+cmd_enable() {
+    need_root
+    [[ -f $SSC_DIR/$NAME ]] || die "plugin non installato: sudo arcbase-ssc rebuild"
+    rm -f "$DISABLED"
+    "$ACTIVATE"
+}
+
+cmd_disable() {
+    need_root
+    mkdir -p "$(dirname "$DISABLED")"
+    : > "$DISABLED"
+    [[ -f $SSC_DIR/$NAME ]] || { echo "SSC non era installato"; return 0; }
+    # solo se nello slot c'è davvero il nostro plugin
+    if cmp -s "$SSC_DIR/$NAME" "$SPA_DIR/$NAME" 2>/dev/null; then
+        if [[ -f $SSC_DIR/aptx-arch.so ]]; then
+            install -m755 "$SSC_DIR/aptx-arch.so" "$SPA_DIR/$NAME.new"
+            mv -f "$SPA_DIR/$NAME.new" "$SPA_DIR/$NAME"
+        else
+            pacman -S --noconfirm pipewire-audio
+        fi
+    fi
+    echo "SSC disattivato: riavvia WirePlumber e riconnetti le cuffie (systemctl --user restart wireplumber)"
+}
+
+# Compila, prova e installa il plugin dal sorgente nella cartella corrente.
+# Lo usano anche lo stadio desktop della build e `rebuild`.
+cmd_build_here() {
+    need_root
+    local tool
+    for tool in meson ninja gcc; do
+        command -v "$tool" >/dev/null || die "manca $tool"
+    done
+    [[ -f meson.build && -f src/ssc.c ]] || die "non è il sorgente di SSC: $PWD"
+    local pw
+    pw=$(pw_version)
+    [[ -n $pw ]] || die "PipeWire non trovato ($PW_PC): serve pipewire con i file di sviluppo e bluez-libs"
+    rm -rf build
+    meson setup build --prefix=/usr --libdir=lib --buildtype=release
+    meson compile -C build
+    # il plugin parla con le cuffie solo se supera i test
+    meson test -C build --print-errorlogs
+    [[ -f build/$NAME ]] || die "plugin non compilato: servono i file di sviluppo di PipeWire e bluez-libs"
+    install -Dm755 "build/$NAME" "$SSC_DIR/$NAME"
+    printf '%s\n' "$pw" > "$SSC_DIR/built-for"
+    install -Dm644 LICENSE "$LICENSE_DIR/LICENSE"
+    install -Dm644 third_party/celt/COPYING.opus "$LICENSE_DIR/COPYING.opus"
+    install -Dm644 third_party/pipewire-bluez5/COPYING.pipewire "$LICENSE_DIR/COPYING.pipewire"
+    echo "plugin SSC compilato per PipeWire $pw"
+}
+
+cmd_rebuild() {
+    need_root
+    local SSC_URL='' SSC_SHA256='' tmp tarball top
+    [[ -r $SSC_CONF ]] || die "manca $SSC_CONF"
+    # shellcheck source=/dev/null
+    . "$SSC_CONF"
+    [[ -n $SSC_URL && $SSC_SHA256 =~ ^[0-9a-f]{64}$ ]] || die "$SSC_CONF incompleto (SSC_URL, SSC_SHA256)"
+    command -v curl >/dev/null || die "manca curl"
+    tmp=$(mktemp -d)
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmp'" EXIT
+    tarball=$tmp/ssc.tar.gz
+    echo "==> scarico $SSC_URL"
+    curl -fsSL -o "$tarball" "$SSC_URL"
+    [[ $(sha256sum "$tarball" | cut -d' ' -f1) == "$SSC_SHA256" ]] \
+        || die "SHA-256 errato per il sorgente scaricato: non lo compilo"
+    tar -xf "$tarball" -C "$tmp"
+    top=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -n1)
+    [[ -n $top ]] || die "il sorgente scaricato è vuoto"
+    (cd "$top" && cmd_build_here)
+    if [[ -e $DISABLED ]]; then
+        echo "SSC è disattivato: arcbase-ssc enable per usarlo"
+    else
+        "$ACTIVATE"
+    fi
+}
+
+cmd=${1:-status}
+case $cmd in
+    status)     cmd_status ;;
+    enable)     cmd_enable ;;
+    disable)    cmd_disable ;;
+    rebuild)    cmd_rebuild ;;
+    build-here) cmd_build_here ;;
+    -h|--help|help) sed -n '3,22p' "$0" | sed 's/^# \{0,2\}//' ;;
+    *) echo "uso: arcbase-ssc status|enable|disable|rebuild" >&2; exit 2 ;;
+esac
